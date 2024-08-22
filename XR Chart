@@ -1,0 +1,172 @@
+#!pip install GaugeRnR
+import os
+#import keras
+import datetime
+#import GaugeRnR
+import numpy as np
+import pandas as pd
+import seaborn as sns
+from scipy.stats import norm
+import matplotlib.pyplot as plt
+#from keras.datasets import mnist
+#from keras.optimizers import RMSprop
+#from keras.models import Sequential
+#from keras.layers import Dense, Dropout
+from sklearn.tree import DecisionTreeRegressor
+from matplotlib.ticker import PercentFormatter
+from sklearn.metrics import mean_absolute_error
+from sklearn.model_selection import cross_val_score,train_test_split
+
+#定義繪圖函數
+# Pareto Chart
+def Pareto(problems, values):
+    df = pd.DataFrame({'Values': values})
+    df.index = problems
+    df = df.sort_values(by='Values',ascending=False)
+    df["cumpercentage"] = df["Values"].cumsum()/df["Values"].sum()*100
+    plt.figure(figsize=(15,5))
+    plt.bar(df.index, df["Values"], color="C0")
+    plt.xticks(rotation=45)
+    ax = plt.twinx()
+    ax.plot(df.index, df["cumpercentage"], color="C9", marker=".")
+    ax.yaxis.set_major_formatter(PercentFormatter())
+    plt.title("Pareto Diagram")
+    plt.tick_params(axis="x", colors="green")
+    plt.tick_params(axis="y", colors="k")
+    plt.grid()
+    plt.show()
+
+# XR Chart
+class XR:
+    def fit(self, data):
+        data = np.array(data)  # 將 data 轉換為 numpy 數組
+        self.sample_size = data.shape[1]
+        self.number_of_sample = data.shape[0]
+        self.X = np.zeros((self.number_of_sample, 1))
+        self.R = np.zeros((self.number_of_sample, 1))
+        for i in range(self.number_of_sample):
+            self.X[i] = data[i].mean()
+            self.R[i] = data[i].max() - data[i].min()
+        self.data = data
+
+    def ControlChart(self, A2, D3, D4):
+        ucl_X = self.X.mean() + A2 * self.R.mean()
+        cl_X = self.X.mean()
+        lcl_X = self.X.mean() - A2 * self.R.mean()
+        ucl_R = D4 * self.R.mean()
+        cl_R = self.R.mean()
+        lcl_R = D3 * self.R.mean()
+
+        # Boxplot for samples
+        plt.figure(figsize=(15, 5))
+        plt.title("Boxplot for {} Observations\nSample Size {}".format(len(self.data), len(self.data[0])))
+        plt.boxplot(self.data.T)  # 使用轉換過的數據進行轉置
+        plt.show()
+
+        # X Chart
+        plt.figure(figsize=(15, 5))
+        plt.plot(self.X, marker="o", color="k", label="X")
+        plt.plot([ucl_X] * len(self.X), color="r", label="UCL={}".format(ucl_X.round(2)))
+        plt.plot([cl_X] * len(self.X), color="c", label="CL={}".format(cl_X.round(2)))
+        plt.plot([lcl_X] * len(self.X), color="r", label="LCL={}".format(lcl_X.round(2)))
+        plt.title("X Chart")
+        plt.xticks(np.arange(len(self.data)))
+        plt.legend()
+        plt.show()
+
+        # R Chart
+        plt.figure(figsize=(15, 5))
+        plt.plot(self.R, marker="o", color="k", label="R")
+        plt.plot([ucl_R] * len(self.X), color="r", label="UCL={}".format(ucl_R.round(2)))
+        plt.plot([cl_R] * len(self.X), color="c", label="CL={}".format(cl_R.round(2)))
+        plt.plot([lcl_R] * len(self.X), color="r", label="LCL={}".format(lcl_R.round(2)))
+        plt.title("R Control Chart")
+        plt.xticks(np.arange(len(self.data)))
+        plt.legend()
+        plt.show()
+
+        # Boxplot of X and R
+        plt.figure(figsize=(15, 5))
+        plt.subplot(1, 2, 1)
+        plt.boxplot(x=self.X)
+        plt.title("Boxplot Of X")
+        plt.xlabel("X")
+
+        plt.subplot(1, 2, 2)
+        plt.boxplot(x=self.R)
+        plt.title("Boxplot Of R")
+        plt.xlabel("R")
+        plt.show()
+
+from openpyxl import Workbook
+from openpyxl.utils.dataframe import dataframe_to_rows
+
+# 設定隨機種子以確保結果可重複
+np.random.seed(42)
+
+# 定義模擬數據的參數
+n_samples = 100  # 模擬數據的樣本數
+
+# 模擬黃光製程的參數
+data = {
+    'exposure time (s)': np.random.normal(20, 2, n_samples),  # 曝光時間，平均值20秒，標準差2秒
+    'focal length (nm)': np.random.normal(150, 10, n_samples),   # 焦距，平均值150納米，標準差10納米
+    'aligment error (nm)': np.random.normal(5, 1, n_samples),  # 對準誤差，平均值5納米，標準差1納米
+    'temperature (°C)': np.random.normal(22, 1, n_samples),      # 溫度，平均值22°C，標準差1°C
+    'humidity (%)': np.random.normal(50, 5, n_samples),       # 濕度，平均值50%，標準差5%
+    'Yield (%)': np.random.normal(90, 5, n_samples)        # 良率，平均值90%，標準差5%
+}
+
+# 創建DataFrame
+df = pd.DataFrame(data)
+
+# 顯示前5筆資料
+print(df.head())
+
+# 保存至CSV檔案
+#df.to_csv('process_simulation_data.csv', index=False)
+
+wb = Workbook()
+ws = wb.active
+ws.title = "process_simulation_data"
+
+for i in dataframe_to_rows(df, index = False, header = True):
+    ws.append(i)
+
+wb.save(r"U:\process_simulation_data.xlsx")
+
+problems = df.columns.tolist()
+values = df.sum().tolist()
+
+Pareto(problems, values)
+
+df[['Yield (%)']]
+
+data = df[['Yield (%)']].values.flatten()  # 先攤平為一維數組
+
+# 確保數據總數量符合重塑的要求
+expected_size = 20 * 5
+if len(data) < expected_size:
+    raise ValueError("數據不足以填充 20 行和 5 列的數組。")
+
+# 補充數據到足夠大小（如果需要），補充為NAN
+data = np.pad(data, (0, expected_size - len(data)), mode='constant', constant_values=np.nan)
+
+# 重塑為 2 維數據 (20 行 x 5 列)
+reshaped_data = data.reshape((20, 5))
+
+# 輸出數據以確認
+#print("Reshaped Data:")
+#print(reshaped_data)
+
+# # 創建XR實例並繪製控制圖
+xr = XR()
+xr.fit(reshaped_data)
+
+# 設定常數，假設樣本大小為5
+A2 = 0.577
+D3 = 0
+D4 = 2.114
+
+xr.ControlChart(A2, D3, D4)
+
