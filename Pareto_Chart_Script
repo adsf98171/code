@@ -1,0 +1,53 @@
+# -*- coding: utf-8 -*-
+
+import pandas as pd
+import seaborn as sns
+import matplotlib.pyplot as plt
+import os
+import xlwings as xw
+
+
+file_path = r"U:\新增資料夾\simulation_data.xlsx"#指定路徑
+
+
+df = pd.read_excel(file_path, sheet_name=0)#讀取數據
+df.columns.values[0] = "Index"
+#df.columns.values[1] = "Count" 
+df.columns = ['Type of Medication Error', 'Count']
+
+print(df.head())  
+
+#排序
+df = df.sort_values(by='Count', ascending=False)
+df['Percent of Errors'] = df['Count'] / df['Count'].sum() * 100
+df['Cumulative Percent'] = df['Percent of Errors'].cumsum()
+
+
+df = df.reset_index(drop=True)
+
+#繪製Pareto Chart
+sns.set_style("whitegrid")
+fig, ax1 = plt.subplots(figsize=(8, 5))
+sns.barplot(x=df.index, y='Count', color='cadetblue', data=df)
+sns.lineplot(x=df.index, y='Cumulative Percent', color='blue', data=df, marker='o', linestyle='--', style=None)
+plt.xlabel('Type of Medication Error')
+plt.ylabel('Count/Cumulative Percentage (%)')
+plt.title('Pareto Chart of Medication Errors')
+plt.xticks(ticks=df.index, labels=df['Type of Medication Error'], rotation=45, ha='right')
+plt.grid(True)
+plt.tight_layout()
+
+#指定儲存路徑
+image_path = r"U:\新增資料夾\pareto_chart.png"
+plt.savefig(image_path)
+plt.close()
+print(f"Pareto chart saved to {image_path}")
+
+#打開excel
+work = xw.Book(file_path)
+sheet = work.sheets[0]
+
+#把Chart插入excel
+print("Adding picture to Excel...")
+sheet.pictures.add(image_path, name="ParetoChart", update=True, left=sheet.range("A10").left, top=sheet.range("A10").top)
+print("Picture added to Excel.")
