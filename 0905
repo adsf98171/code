@@ -1,0 +1,232 @@
+import pandas as pd
+
+# 假設有一個 DataFrame，其中包含 "Lens" 欄位
+data = {'Lens': ['Left-Scan1', 'Left-Median-Scan1', 'Median-Scan1', 'Right-Median-Scan2', 'Right-Scan3']}
+df = pd.DataFrame(data)
+
+# 建立 "Position" 欄位，根據 Lens 欄位的內容來分類
+def determine_position(lens_value):
+    if 'Left-Median' in lens_value:
+        return 'Left-Median'
+    elif 'Left' in lens_value:
+        return 'Left'
+    elif 'Right-Median' in lens_value:
+        return 'Right-Median'
+    elif 'Right' in lens_value:
+        return 'Right'
+    elif 'Median' in lens_value:
+        return 'Median'
+    else:
+        return 'Unknown'  # 用於處理未預期的情況
+    
+def determine_scan(lens_value):
+    if 'Scan1' in lens_value:
+        return 'Scan1'
+    elif 'Scan2' in lens_value:
+        return 'Scan2'
+    elif 'Scan3' in lens_value:
+        return 'Scan3'
+    elif 'Right' in lens_value:
+        return 'Right'
+    elif 'Scan4' in lens_value:
+        return 'Scan4'
+    elif 'Scan5' in lens_value:
+        return 'Scan5'
+    elif 'Scan6' in lens_value:
+        return 'Scan6'
+    else:
+        return 'Unknown'  # 用於處理未預期的情況
+
+df['Position'] = df['Lens'].apply(determine_position)
+df['Scan'] = df['Lens'].apply(determine_scan)
+
+print(df)
+
+========================================================================================================================
+========================================================================================================================
+import numpy as np
+import pandas as pd
+import xlwings as xw
+import os
+
+class Chart:
+    @staticmethod
+    def read_excel_file(file_path):
+        try:
+            df = pd.read_excel(file_path)
+            return df
+        except Exception as e:
+            return f"Error reading file: {e}"
+    
+    @staticmethod
+    def classify_samples(sample_number, ranges_dict):
+        for label, (start, end) in ranges_dict.items():
+            if start <= sample_number <= end:
+                return label
+        return "Unclassified"
+    
+    @staticmethod
+    def classify_samples_with_rule(sample_number, rule_choice):
+        scan_ranges_1 = {
+            "Left-Scan1": (1, 10),
+            "Left-Scan2": (11, 40),
+            "Left-Scan3": (41, 70),
+            "Left-Median-Scan1": (71, 80),
+            "Left-Median-Scan2": (81, 100),
+            "Left-Median-Scan3": (101, 130),
+            "Median-Scan1": (131, 150),
+            "Median-Scan2": (151, 160),
+            "Median-Scan3": (161, 180),
+            "Right-Median-Scan1": (181, 210),
+            "Right-Median-Scan2": (211, 220),
+            "Right-Median-Scan3": (221, 240),
+            "Right-Scan1": (241, 260),
+            "Right-Scan2": (261, 290),
+            "Right-Scan3": (291, 300),
+            "Left-Scan4": (301, 320),
+        }
+    
+        scan_ranges_2 = {
+            "Left-Scan1": (1, 12),
+            "Left-Scan2": (13, 22),
+            "Left-Scan3": (23, 34),
+            "Left-Median-Scan1": (35, 46),
+            "Left-Median-Scan2": (47, 56),
+            "Left-Median-Scan3": (57, 68),
+            "Median-Scan1": (69, 80),
+            "Median-Scan2": (81, 90),
+            "Median-Scan3": (91, 102),
+            "Right-Median-Scan1": (103, 114),
+            "Right-Median-Scan2": (115, 124),
+            "Right-Median-Scan3": (125, 136),
+            "Right-Scan1": (137, 148),
+            "Right-Scan2": (149, 158),
+            "Right-Scan3": (159, 170),
+            "Right-Scan4": (171, 182),
+            "Right-Scan5": (183, 192),
+            "Right-Scan6": (193, 204),
+        }
+    
+        if rule_choice == 1:
+            ranges_dict = scan_ranges_1
+        elif rule_choice == 2:
+            ranges_dict = scan_ranges_2
+        else:
+            return "Invalid rule choice"
+
+        return Chart.classify_samples(sample_number, ranges_dict)
+
+    @staticmethod
+    def calculate_statistics(df):
+        stats = pd.DataFrame(index=["Count", "Mean", "Standard Deviation", "Max", "Min"])
+    
+        for col in df.columns:
+            count = df[col].count()
+            mean = df[col].mean().round(4)
+            std = df[col].std().round(4)
+            max_value = df[col].max().round(4)
+            min_value = df[col].min().round(4)
+    
+            stats[col] = [count, mean, std, max_value, min_value]
+        
+        return stats
+
+    @staticmethod
+    def plot_statistics_table(stats, sheet, cell):
+        fig, ax = plt.subplots(figsize=(8, 2))  # 增加表格的寬度
+        ax.axis("tight")
+        ax.axis("off")
+        table = ax.table(cellText=stats.values, colLabels=stats.columns, rowLabels=stats.index, cellLoc="center", loc="center")
+        table.auto_set_font_size(False)
+        table.set_fontsize(10)  # 減小字體大小
+        table.scale(1.2, 1.2)  # 調整表格比例
+    
+        plt.title("Summary Statistics for Each Index")
+    
+        # Save the statistics table to a temporary file
+        stats_temp_file = os.path.join("U:\\Chart_Script", "statistics_table.png")
+        plt.savefig(stats_temp_file, bbox_inches="tight")  # 確保圖片不會被裁切
+        plt.close()
+    
+        # Insert the statistics table into Excel
+        sheet.pictures.add(stats_temp_file, top=sheet.range(cell).top, left=sheet.range(cell).left)
+
+
+if __name__ == "__main__":
+    print("Select the rule to use:")
+    print("1. Rule 1")
+    print("2. Rule 2")
+    rule_choice = int(input("Enter your choice (1 or 2): "))
+
+    file_path = input("Enter the path to your Excel file: ")
+    file_path = file_path.strip().replace('\u202a', '')
+    df = pd.read_excel(file_path, sheet_name=0, skiprows=22)
+    
+    # Fix for rename operation to avoid None result
+    df = df.rename(columns={"No(I)": "SampleNumber"})
+    
+    # Assuming there is a 'SampleNumber' column
+    sample_numbers = df['SampleNumber'].tolist()
+    
+    # Create new column 'Lens' based on classification
+    df['Lens'] = [Chart.classify_samples_with_rule(number, rule_choice) for number in sample_numbers]
+    
+    # Define Position categories
+    position_categories = ["Left", "Left-Median", "Median", "Right-Median", "Right"]
+    
+    # Create Position column based on Lens values
+    df['Position'] = df['Lens'].apply(lambda x: x.split('-')[0] if x.split('-')[0] in position_categories else "Unclassified")
+    
+    # Reorder columns to place 'Position' as the second column
+    columns = df.columns.tolist()
+    columns.insert(1, columns.pop(columns.index('Position')))
+    df = df[columns]
+    
+    # Print the updated DataFrame to see the changes
+    print(df)
+    
+    app = xw.App(visible=True)#設置為 False。這樣 Excel 將在後台運行而不顯示給用戶。
+    wb = xw.Book(file_path)
+    
+    #獲取現有工作表，在舊的表後依序加入新的表
+    existing_sheets = wb.sheets
+    if len(existing_sheets) > 0:
+        existing_sheet = existing_sheets[-1]  # 獲取最後一個工作表
+    else:
+        existing_sheet = None
+    
+    # 在最後一個工作表後添加新工作表
+    ws_stats = wb.sheets.add('Statistics', after= existing_sheet)
+    ws_control = wb.sheets.add('Control Charts', after= ws_stats)
+    
+    # 繪製 X(R) 和 Y(R) 的散布圖
+    if "X(R)" in df.columns and "Y(R)" in df.columns:
+        x_data = df["X(R)"].values
+        y_data = df["Y(R)"].values
+        
+        chart = Chart()
+        chart.plot_scatter_chart(x_data, y_data, ws_stats, 'A9')  # ws_control
+    else:
+        print("X(R) 或 Y(R) 欄位不在資料中")
+        
+    column_of_interest = ["L1(R)", "L2(R)", "L3(R)", "L4(R)", "L5(R)", "A1(R)", "A2(R)", "A3(R)", "G1(R)", "G2(R)"]
+    exist_columns = [col for col in column_of_interest if col in df.columns]
+    no_nan_columns = [col for col in exist_columns if not df[col].isna().all()]
+    
+    df_filtered = df[no_nan_columns]
+    
+    N = len(df_filtered)
+    sample_names = [f'Sample {i+1}' for i in range(N)]
+    
+    # 計算統計量
+    stats = Chart.calculate_statistics(df_filtered)
+    
+    # 繪製統計表
+    Chart.plot_statistics_table(stats, ws_stats, 'A1')
+
+# 儲存 Excel
+    wb.save(os.path.join("U:\\Chart_Script", "charts.xlsx"))  # 輸出
+    wb.close()
+    app.quit()
+
+
