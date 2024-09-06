@@ -1,0 +1,597 @@
+import numpy as np
+#import mplcursors
+import matplotlib.pyplot as plt
+import pandas as pd
+import xlwings as xw
+import os
+
+class Chart:
+    @staticmethod
+    def read_excel_file(file_path):
+        try:
+            df = pd.read_excel(file_path)
+            return df
+        except Exception as e:
+            return f"Error reading file: {e}"
+    
+    @staticmethod
+    def classify_samples(sample_number, ranges_dict):
+        for label, (start, end) in ranges_dict.items():
+            if start <= sample_number <= end:
+                return label
+        return "Unclassified"
+    
+    def determine_position(lens_value):
+        if 'Left-Median' in lens_value:
+            return 'Left-Median'
+        elif 'Left' in lens_value:
+            return 'Left'
+        elif 'Right-Median' in lens_value:
+            return 'Right-Median'
+        elif 'Right' in lens_value:
+            return 'Right'
+        elif 'Median' in lens_value:
+            return 'Median'
+        else:
+            return 'Unknown'  # 用於處理未預期的情況
+    
+    def determine_scan(lens_value):
+        if 'Scan1' in lens_value:
+            return 'Scan1'
+        elif 'Scan2' in lens_value:
+            return 'Scan2'
+        elif 'Scan3' in lens_value:
+            return 'Scan3'
+        elif 'Scan4' in lens_value:
+            return 'Scan4'
+        elif 'Scan5' in lens_value:
+            return 'Scan5'
+        elif 'Scan6' in lens_value:
+            return 'Scan6'
+        else:
+            return 'Unknown'  # 用於處理未預期的情況
+        
+    def update_sample_column_for_each_scan(df):
+        # 根據 Scan 為每個資料集的 Sample 欄位更新為 ScanX-1, ScanX-2,... 這樣的格式
+
+        # 獲取所有唯一的 Scan
+        unique_scans = df['Scan'].unique()
+    
+        # 為每個 Scan 生成對應的 Sample 編號
+        for scan in unique_scans:
+            # 選取對應 Scan 的子集資料
+            scan_subset = df[df['Scan'] == scan].copy()
+        
+            # 計算子集資料的行數
+            num_samples = scan_subset.shape[0]
+        
+            # 生成新的 Sample 欄位，格式為 ScanX-1 ~ ScanX-n
+            scan_subset['Sample'] = [f'{scan}-{i+1}' for i in range(num_samples)]
+        
+            # 更新原 DataFrame 中對應的行
+            df.loc[df['Scan'] == scan, 'Sample'] = scan_subset['Sample']
+    
+        return df
+    
+    def plot_scatter_chart(self, x_data, y_data, sheet, cell):
+        plt.figure(figsize=(10, 6))
+        plt.scatter(x_data, y_data, color='blue')
+        plt.title("Scatter of X(R) and Y(R)")
+        plt.xlabel("X(R)")
+        plt.ylabel("Y(R)")
+        
+        save_dir = "U:\\Chart_Script"  # 指定儲存圖片的位置
+        if not os.path.exists(save_dir):
+            os.makedirs(save_dir)  # 如果資料夾不存在，則創建
+        
+        scatter_temp_file = os.path.join(save_dir, "scatter_chart.png")
+        plt.savefig(scatter_temp_file)
+        plt.close()
+    
+    # 插入excel
+        sheet.pictures.add(scatter_temp_file, top=sheet.range(cell).top, left=sheet.range(cell).left)
+        
+    @staticmethod
+    def classify_samples_with_rule(sample_number, rule_choice):
+        # 用兩個範圍來分類樣本
+        scan_ranges_1 = {
+            "Left-Scan1": (1, 20),
+            "Left-Scan2": (21, 40),
+            "Left-Scan3": (41, 60),
+            "Left-Median-Scan1": (61, 80),
+            "Left-Median-Scan2": (81, 100),
+            "Left-Median-Scan3": (101, 120),
+            "Median-Scan1": (121, 140),
+            "Median-Scan2": (141, 160),
+            "Median-Scan3": (161, 180),
+            "Right-Median-Scan1": (181, 200),
+            "Right-Median-Scan2": (201, 220),
+            "Right-Median-Scan3": (221, 240),
+            "Right-Scan1": (241, 260),
+            "Right-Scan2": (261, 280),
+            "Right-Scan3": (281, 300),
+            #"Left-Scan4": (301, 320),
+        }
+    
+        scan_ranges_2 = {
+            "Left-Scan1": (1, 12),
+            "Left-Scan2": (13, 22),
+            "Left-Scan3": (23, 34),
+            "Left-Median-Scan1": (35, 46),
+            "Left-Median-Scan2": (47, 56),
+            "Left-Median-Scan3": (57, 68),
+            "Median-Scan1": (69, 80),
+            "Median-Scan2": (81, 90),
+            "Median-Scan3": (91, 102),
+            "Right-Median-Scan1": (103, 114),
+            "Right-Median-Scan2": (115, 124),
+            "Right-Median-Scan3": (125, 136),
+            "Right-Scan1": (137, 148),
+            "Right-Scan2": (149, 158),
+            "Right-Scan3": (159, 170),
+            "Right-Scan4": (171, 182),
+            "Right-Scan5": (183, 192),
+            "Right-Scan6": (193, 204),
+        }
+    
+        if rule_choice == 1:
+            ranges_dict = scan_ranges_1
+        elif rule_choice == 2:
+            ranges_dict = scan_ranges_2
+        else:
+            return "Invalid rule choice"
+
+        return Chart.classify_samples(sample_number, ranges_dict)
+    
+    @staticmethod
+    def calculate_statistics(df):
+        stats = pd.DataFrame(index=["Count", "Mean", "Standard Deviation", "Max", "Min"])
+    
+        for col in df.columns:
+            count = df[col].count()
+            mean = df[col].mean().round(4)
+            std = df[col].std().round(4)
+            max_value = df[col].max().round(4)
+            min_value = df[col].min().round(4)
+    
+            stats[col] = [count, mean, std, max_value, min_value]
+        
+        return stats
+    
+    @staticmethod
+    def plot_statistics_table(stats, sheet, cell):
+        fig, ax = plt.subplots(figsize=(8, 2))  # 增加表格的寬度
+        ax.axis("tight")
+        ax.axis("off")
+        table = ax.table(cellText=stats.values, colLabels=stats.columns, rowLabels=stats.index, cellLoc="center", loc="center")
+        table.auto_set_font_size(False)
+        table.set_fontsize(10)  # 減小字體大小
+        table.scale(1.2, 1.2)  # 調整表格比例
+    
+        plt.title("Summary Statistics for Each Index")
+    
+        #Save the statistics table to a temporary file
+        stats_temp_file = os.path.join("U:\\Chart_Script", "statistics_table.png")
+        plt.savefig(stats_temp_file, bbox_inches="tight")  # 確保圖片不會被裁切
+        plt.close()
+    
+        # Insert the statistics table into Excel
+        sheet.pictures.add(stats_temp_file, top=sheet.range(cell).top, left=sheet.range(cell).left)
+        
+    @staticmethod
+    def plot_control_charts_with_lines(data_left, data_left_median, data_median, data_right_median, data_right, sheet, cell):
+        # 迴圈處理每個以 'L' 和 'A' 開頭的欄位
+        columns_to_plot = [col for col in data_left.columns if col.startswith('L') or col.startswith('A')]
+        
+        for col in columns_to_plot:
+            plt.figure(figsize=(12, 6))
+            
+            # 繪製5條不同資料集的線
+            plt.plot(data_left['Sample'], data_left[col], marker='o', linestyle='-', color='b', label=f'{col} - Left')
+            plt.plot(data_left_median['Sample'], data_left_median[col], marker='o', linestyle='-', color='g', label=f'{col} - Left-Median')
+            plt.plot(data_median['Sample'], data_median[col], marker='o', linestyle='-', color='r', label=f'{col} - Median')
+            plt.plot(data_right_median['Sample'], data_right_median[col], marker='o', linestyle='-', color='c', label=f'{col} - Right-Median')
+            plt.plot(data_right['Sample'], data_right[col], marker='o', linestyle='-', color='m', label=f'{col} - Right')
+            
+            plt.axhline(y=data_left[col].mean(), color='red', linestyle='--', label='Mean')
+            plt.axhline(y=data_left[col].mean() + 0.3, color='green', linestyle='--', label='Upper Control Limit')
+            plt.axhline(y=data_left[col].mean() - 0.3, color='orange', linestyle='--', label='Lower Control Limit')
+            
+            plt.title(f"Control Chart for {col}")
+            plt.xlabel("Sample")
+            plt.ylabel(col)
+            plt.xticks(rotation=90)
+            plt.legend()
+            plt.tight_layout()
+            
+            # Save the plot to a temporary file
+            control_chart_temp_file = os.path.join("U:\\Chart_Script", f"{col}_control_chart.png")
+            plt.savefig(control_chart_temp_file)
+            plt.close()
+            
+            # Insert the plot into the Excel sheet
+            sheet.pictures.add(control_chart_temp_file, top=sheet.range(cell).top, left=sheet.range(cell).left)
+            
+            # Move to next cell for the next plot
+            cell = sheet.range(cell).offset(25, 0).get_address()
+    
+    # 插入excel
+            sheet.pictures.add(control_chart_temp_file, top=sheet.range(cell).top, left=sheet.range(cell).left)
+            
+
+if __name__ == "__main__":
+    print("Select the rule to use:")
+    print("1. Rule 1")
+    print("2. Rule 2")
+    rule_choice = int(input("Enter your choice (1 or 2): "))
+
+    file_path = input("Enter the path to your Excel file: ")
+    file_path = file_path.strip().replace('\u202a', '')
+    #file_path = "simulated_data.xlsx"
+    df = pd.read_excel(file_path, sheet_name=0, skiprows=22)
+    #print(df)
+    # Fix for rename operation to avoid None result
+    df = df.rename(columns={"No(I)": "SampleNumber"})
+    #print(df)
+    # Assuming there is a 'SampleNumber' column
+    sample_numbers = df['SampleNumber'].tolist()
+    
+    # Create new column 'Lens' based on classification
+    df['Lens'] = [Chart.classify_samples_with_rule(number, rule_choice) for number in sample_numbers]
+    
+    # Define Position categories
+    position_categories = ["Left", "Left-Median", "Median", "Right-Median", "Right"]
+    
+    # Create Position column based on Lens values
+    df['Position'] = df['Lens'].apply(Chart.determine_position)
+    df['Scan'] = df['Lens'].apply(Chart.determine_scan)
+    
+    # Reorder columns to place 'Position' as the second column
+    columns = df.columns.tolist()
+    columns.insert(1, columns.pop(columns.index('Position')))
+    df = df[columns]
+    
+    # Print the updated DataFrame to see the changes
+    #print(df)
+    
+    app = xw.App(visible=True)#設置為 False。這樣 Excel 將在後台運行而不顯示給用戶。
+    wb = xw.Book(file_path)
+    #ws_control = wb.sheets.add('Control Charts')
+    #ws_stats = wb.sheets.add('Statistics')
+
+# 獲取現有工作表，在舊的表後依序加入新的表
+    existing_sheets = wb.sheets
+    if len(existing_sheets) > 0:
+        existing_sheet = existing_sheets[-1]  # 獲取最後一個工作表
+    else:
+        existing_sheet = None
+    
+    # 在最後一個工作表後添加新工作表
+    ws_stats = wb.sheets.add('Statistics', after= existing_sheet)
+    ws_control = wb.sheets.add('Control Charts', after= ws_stats)
+    
+    # 繪製 X(R) 和 Y(R) 的散布圖
+    if "X(R)" in df.columns and "Y(R)" in df.columns:
+        x_data = df["X(R)"].values
+        y_data = df["Y(R)"].values
+        
+        chart = Chart()
+        chart.plot_scatter_chart(x_data, y_data,ws_stats, 'A9')#ws_control
+    else:
+        print("X(R) 或 Y(R) 欄位不在資料中")
+        
+    column_of_interest = ["L1(R)", "L2(R)", "L3(R)", "L4(R)", "L5(R)", "A1(R)", "A2(R)", "A3(R)", "G1(R)", "G2(R)"]
+    exist_columns = [col for col in column_of_interest if col in df.columns]
+    no_nan_columns = [col for col in exist_columns if not df[col].isna().all()]
+    
+    df_filtered = df[no_nan_columns]
+    #print(df_filtered)
+    
+    N = len(df_filtered)
+    sample_names = [f'Sample {i+1}' for i in range(N)]
+    
+    # 計算統計量
+    stats = Chart.calculate_statistics(df_filtered)
+    
+    # 繪製統計表
+    Chart.plot_statistics_table(stats, ws_stats, 'A1')
+    
+###################################################################################
+###################################################################################
+    #合成data，Position + df_filtered
+    df_filtered["Position"] = df["Position"]
+    # 取得所有欄位的名稱
+    cols = df_filtered.columns.tolist()
+   # 將最後一個欄位移到列表的第一個位置
+    cols = [cols[-1]] + cols[:-1]
+    # 根據重新排列的列表重新排列 DataFrame 的欄位
+    df_filtered = df_filtered[cols]
+    
+    #合成data，Scan + df_filtered
+    df_filtered["Scan"] = df["Scan"]
+    # 取得所有欄位的名稱
+    cols = df_filtered.columns.tolist()
+   # 將最後一個欄位移到列表的第一個位置
+    cols = [cols[0]] + [cols[-1]] + cols[1:-1]
+    # 根據重新排列的列表重新排列 DataFrame 的欄位
+    df_filtered = df_filtered[cols]
+    
+    #合成data，SampleName + df_filtered
+    df_filtered["SampleNumber"] = df["SampleNumber"]
+    # 取得所有欄位的名稱
+    cols = df_filtered.columns.tolist()
+   # 將最後一個欄位移到列表的第一個位置
+    cols = [cols[-1]] + cols[:-1]
+    # 根據重新排列的列表重新排列 DataFrame 的欄位
+    df_filtered = df_filtered[cols]
+    
+    # 創建 'Sample' 欄位
+    df_filtered['Sample'] = df_filtered.apply(lambda row: f"{row['Scan']}-{row['SampleNumber']}", axis=1)
+
+    # 移動 'Sample' 欄位到最前面
+    cols = ['Sample'] + [col for col in df_filtered.columns if col != 'Sample']
+    df_filtered = df_filtered[cols]
+    #df_filtered = df_filtered.drop("SampleNumber", axis='columns')
+    #替換第一、二欄
+    cols = df_filtered.columns.tolist()
+    cols[0], cols[1] = cols[1], cols[0]  # 交換欄位
+    # 根據重新排列的列表重新排列 DataFrame 的欄位
+    df_filtered = df_filtered[cols]
+    
+    df_print = df_filtered.drop("Sample", axis='columns')
+
+    # 將 DataFrame 輸出到新工作表
+    #ws_control.range('A1').options(index=False, header=True).value = df_print
+    
+
+    #挑選Position為Left為data_Left
+    data_Left = df_filtered[df_filtered['Position'] == 'Left']
+    data_Left_Median = df_filtered[df_filtered['Position'] == 'Left-Median']
+    data_Median = df_filtered[df_filtered['Position'] == 'Median']
+    data_Right_Median = df_filtered[df_filtered['Position'] == 'Right-Median']
+    data_Right = df_filtered[df_filtered['Position'] == 'Right']
+    
+    data_Left = Chart.update_sample_column_for_each_scan(data_Left)
+    data_Left_Median = Chart.update_sample_column_for_each_scan(data_Left_Median)
+    data_Median = Chart.update_sample_column_for_each_scan(data_Median)
+    data_Right_Median = Chart.update_sample_column_for_each_scan(data_Right_Median)
+    data_Right = Chart.update_sample_column_for_each_scan(data_Right)
+    
+    Chart.plot_control_charts_with_lines(data_Left, data_Left_Median, data_Median, data_Right_Median, data_Right, ws_control, 'L1')
+    
+    # 垂直合併
+    total_data = pd.concat([data_Left, data_Left_Median, data_Median, data_Right_Median, data_Right], axis=0)
+
+    # 重置索引，避免索引衝突
+    total_data.reset_index(drop=True, inplace=True)
+    # 取得所有欄位的順序
+    columns = list(total_data.columns)
+
+    # 將第二欄位 ('Diff') 移動到第三個位置
+    columns.insert(2, columns.pop(1))
+
+    # 使用新的順序來重新排列 DataFrame
+    total_data = total_data[columns]
+    
+    ws_control.range('A1').options(index=False, header=True).value = total_data
+    
+###################################################################################
+###################################################################################    
+
+    
+# 儲存 Excel
+    wb.save(os.path.join("U:\\Chart_Script", "charts.xlsx"))#輸出位置與檔名
+    wb.close()
+    app.quit()
+
+
+
+
+
+
+
+
+import numpy as np
+#import mplcursors
+import matplotlib.pyplot as plt
+import pandas as pd
+import xlwings as xw
+import os
+
+class Chart:
+    @staticmethod
+    def read_excel_file(file_path):
+        try:
+            df = pd.read_excel(file_path)
+            return df
+        except Exception as e:
+            return f"Error reading file: {e}"
+        
+        
+    def get_lens_value(scan, position, sample_number):
+        key = f"{position}-{scan}"
+        if key in scan_subgroup_map_1:
+            for m, (start, end) in scan_subgroup_map_1[key].items():
+                if start <= sample_number <= end:
+                    return m
+        return None
+    
+
+    def calculate_differences(df):
+        results = []
+
+    # 按 Position 和 Scan 分組
+        grouped = df.groupby(['Position', 'Scan'])
+
+        for (position, scan), group in grouped:
+        # 依照 'SampleNumber' 排序，以確保 M 分段的順序正確
+            group = group.sort_values(by='SampleNumber')
+
+        # 提取每組 M 分段
+            m_segments = group['Lens'].unique()
+
+        # 計算 M 分段交界處的差值
+            for i in range(len(m_segments) - 1):
+                m1 = m_segments[i]
+                m2 = m_segments[i + 1]
+            
+            # 取出 M1 和 M2 的數據
+                data_m1 = group[group['Lens'] == m1]
+                data_m2 = group[group['Lens'] == m2]
+            
+            # 計算每個列的差值
+                for column in ['L1(R)', 'L2(R)', 'L3(R)', 'L4(R)', 'L5(R)', 'A1(R)', 'A2(R)']:
+                    if not data_m1.empty and not data_m2.empty:
+                    # 計算每對 M 分段交界處的平均差值
+                        diff = data_m2[column].mean() - data_m1[column].mean()
+                        results.append({
+                            'Position': position,
+                            'Scan': scan,
+                            'M1': m1,
+                            'M2': m2,
+                            'Column': column,
+                            'Difference': diff
+                        })
+
+        return pd.DataFrame(results)
+
+
+
+    
+    @staticmethod
+    def plot_diff_charts_with_lines(data_left, data_left_median, data_median, data_right_median, data_right, sheet, cell):
+        # 迴圈處理每個以 'L' 和 'A' 開頭的欄位
+        columns_to_plot = [col for col in data_Left.columns if col.startswith('Diff-L') or col.startswith('Diff-A')]
+
+        for col in columns_to_plot:
+            plt.figure(figsize=(12, 6))
+            
+            # 繪製5條不同資料集的線
+            plt.plot(data_left['Diff'], data_left[col], marker='o', linestyle='-', color='b', label=f'{col} - Left')
+            plt.plot(data_left_median['Diff'], data_left_median[col], marker='o', linestyle='-', color='g', label=f'{col} - Left-Median')
+            plt.plot(data_median['Diff'], data_median[col], marker='o', linestyle='-', color='r', label=f'{col} - Median')
+            plt.plot(data_right_median['Diff'], data_right_median[col], marker='o', linestyle='-', color='c', label=f'{col} - Right-Median')
+            plt.plot(data_right['Diff'], data_right[col], marker='o', linestyle='-', color='m', label=f'{col} - Right')
+            
+            plt.axhline(y=data_left[col].mean(), color='green', linestyle='--', label='Mean')
+            plt.axhline(y=data_left[col].mean() + 0.3, color='red', linestyle='--', label='Upper Control Limit')
+            plt.axhline(y=data_left[col].mean() - 0.3, color='orange', linestyle='--', label='Lower Control Limit')
+            
+            plt.title(f"Difference Chart for {col}")
+            plt.xlabel("Sample")
+            plt.ylabel(col)
+            plt.xticks(rotation=90)
+            plt.legend()
+            plt.tight_layout()
+            
+            # Save the plot to a temporary file
+            diff_chart_temp_file = os.path.join("U:\\Chart_Script", f"{col}_diff_chart.png")
+            plt.savefig(diff_chart_temp_file)
+            plt.close()
+            
+            # Insert the plot into the Excel sheet
+            sheet.pictures.add(diff_chart_temp_file, top=sheet.range(cell).top, left=sheet.range(cell).left)
+            
+            # Move to next cell for the next plot
+            cell = sheet.range(cell).offset(25, 0).get_address()
+    
+    # 插入excel
+            sheet.pictures.add(diff_chart_temp_file, top=sheet.range(cell).top, left=sheet.range(cell).left)
+            
+
+if __name__ == "__main__":
+    
+#     file_path = input("Enter the path to your Excel file: ")
+#     file_path = file_path.strip().replace('\u202a', '')
+    file_path = r"U:\Chart_Script\charts.xlsx"
+    df = pd.read_excel(file_path, sheet_name="Control Charts")
+    #df = df.drop(columns = ["Position","Sample","Scan"])
+    print(df)
+    
+    scan_subgroup_map_1 = {
+    "Left-Scan1": {"M1": (1, 4), "M2": (5, 9), "M3": (10, 12), "M4": (13, 15), "M5": (16,18), "M6": (19,20)},  
+    "Left-Scan2": {"M2": (21, 24), "M3": (25, 26), "M4": (27, 30),"M5": (31, 34), "M6": (35, 36), "M7": (37, 40)},  
+    "Left-Scan3": {"M2": (41, 44), "M3": (45, 46), "M4": (47, 50),"M5": (51, 54), "M6": (55, 56), "M7": (57, 60)},
+    "Left-Median-Scan1": {"M2": (61, 64), "M3": (65, 66), "M4": (67, 70),"M5": (71, 74), "M6": (75, 76), "M7": (77, 80)},
+    "Left-Median-Scan2": {"M2": (81, 84), "M3": (85, 86), "M4": (87, 90),"M5": (91, 94), "M6": (95, 96), "M7": (97, 100)},
+    "Left-Median-Scan3": {"M2": (101, 104), "M3": (105, 106), "M4": (107, 110),"M5": (111, 114), "M6": (115, 116), "M7": (117, 120)},
+    "Median-Scan1": {"M2": (121, 124), "M3": (125, 126), "M4": (127, 130),"M5": (131, 134), "M6": (135, 136), "M7": (137, 140)},
+    "Median-Scan2": {"M2": (141, 144), "M3": (145, 146), "M4": (147, 150),"M5": (151, 154), "M6": (155, 156), "M7": (157, 160)},
+    "Median-Scan3": {"M2": (161, 164), "M3": (165, 166), "M4": (167, 170),"M5": (171, 174), "M6": (175, 176), "M7": (177, 180)},
+    "Right-Median-Scan1": {"M2": (181, 184), "M3": (185, 186), "M4": (187, 190),"M5": (191, 194), "M6": (195, 196), "M7": (197, 200)},
+    "Right-Median-Scan2": {"M2": (201, 204), "M3": (205, 206), "M4": (207, 210),"M5": (211, 214), "M6": (215, 216), "M7": (217, 220)},
+    "Right-Median-Scan3": {"M2": (221, 224), "M3": (225, 226), "M4": (227, 230),"M5": (231, 234), "M6": (235, 236), "M7": (237, 240)},
+    "Right-Scan1": {"M2": (241, 244), "M3": (245, 246), "M4": (247, 250),"M5": (251, 254), "M6": (255, 256), "M7": (257, 260)},
+    "Right-Scan2": {"M2": (261, 264), "M3": (265, 266), "M4": (267, 270),"M5": (271, 274), "M6": (275, 276), "M7": (277, 280)},
+    "Right-Scan3": {"M2": (281, 284), "M3": (285, 286), "M4": (287, 290),"M5": (291, 294), "M6": (295, 296), "M7": (297, 300)},
+}
+
+
+# 應用映射規則並新增 Lens 欄位
+    df['Lens'] = df.apply(lambda row: get_lens_value(row['Scan'], row['Position'], row['SampleNumber']), axis=1)
+    
+    differences_df = Chart.calculate_differences(df)
+    
+#     # Calculate differences
+#     #cols_to_calculate = ["L1(R)", "L2(R)", "L3(R)", "L4(R)", "L5(R)", "A1(R)", "A2(R)"]
+#     prefixes = ["L", "A"]
+    
+#     # 過濾以指定字母開頭的列
+#     cols_to_calculate = [col for col in df_filtered.columns if any(col.startswith(prefix) for prefix in prefixes)]
+#     #print(cols_to_calculate)
+    
+#     diff_df = calculate_diffs(df_filtered, cols_to_calculate)
+#     diff_df_grouped = diff_df.groupby("Lens", as_index=False).first()
+
+
+    
+    
+#     app = xw.App(visible=True)#設置為 False。這樣 Excel 將在後台運行而不顯示給用戶。
+#     wb = xw.Book(file_path)
+#     #ws_control = wb.sheets.add('Control Charts')
+#     #ws_stats = wb.sheets.add('Statistics')
+
+# # 獲取現有工作表，在舊的表後依序加入新的表
+#     existing_sheets = wb.sheets
+#     if len(existing_sheets) > 0:
+#         existing_sheet = existing_sheets[-1]  # 獲取最後一個工作表
+#     else:
+#         existing_sheet = None
+    
+#     # 在最後一個工作表後添加新工作表
+#     ws_diff = wb.sheets.add('Diff Charts', after= existing_sheet)
+    
+# ###################################################################################
+# ###################################################################################
+#     cols_to_calculate = ['L1(R)', 'L2(R)', 'L3(R)', 'L4(R)', 'L5(R)', 'A1(R)', 'A2(R)']
+#     Diff_df = Chart.calculate_diffs(df, cols_to_calculate)
+
+#     #print(Diff_df)
+#     # 將 DataFrame 輸出到新工作表
+#     ws_diff.range('A1').options(index=False, header=True).value = Diff_df
+    
+#     #挑選Position為Left為data_Left
+#     data_Left = Diff_df[Diff_df['Position'] == 'Left']
+#     data_Left_Median = Diff_df[Diff_df['Position'] == 'Left-Median']
+#     data_Median = Diff_df[Diff_df['Position'] == 'Median']
+#     data_Right_Median = Diff_df[Diff_df['Position'] == 'Right-Median']
+#     data_Right = Diff_df[Diff_df['Position'] == 'Right']
+#     #print(data_Left_Median)
+# #     data_Left = Chart.update_sample_column_for_each_scan(data_Left)
+# #     data_Left_Median = Chart.update_sample_column_for_each_scan(data_Left_Median)
+# #     data_Median = Chart.update_sample_column_for_each_scan(data_Median)
+# #     data_Right_Median = Chart.update_sample_column_for_each_scan(data_Right_Median)
+# #     data_Right = Chart.update_sample_column_for_each_scan(data_Right)
+    
+#     Chart.plot_diff_charts_with_lines(data_Left, data_Left_Median, data_Median, data_Right_Median, data_Right, ws_diff, 'K1')
+    
+# ###################################################################################
+# ###################################################################################    
+
+    
+# # 儲存 Excel
+#     wb.save(os.path.join("U:\\Chart_Script", "charts.xlsx"))#輸出位置與檔名
+#     wb.close()
+#     app.quit()
+
+
