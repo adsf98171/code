@@ -1,0 +1,219 @@
+#python
+
+from flask import Flask, render_template, request
+import datetime
+
+app = Flask(__name__)
+
+# 模擬資料庫的查詢結果
+data = [
+    {'Lot_ID': 'FV24G8TN30', 'Slot_No': '31', 'Glass_ID': 'FV24G8TN30P31', 'OP_NO': '624', 'DEV_NO': '4', 'Recipe_ID': 'FV1N8163', 'Titan_Time': '2024-09-03 02:50', 'measure_cnt': '', 'Last_PH_TIME': '', 'PH_STEP': '', 'PH_EQ': '', 'csv': 'http://10.31.21.21/result/FV/8173/20240903025031_FV24G8TN30P31.csv'},
+    {'Lot_ID': 'FV24G8SR30', 'Slot_No': '1', 'Glass_ID': 'FV24G8SR30P01', 'OP_NO': '1060', 'DEV_NO': '4', 'Recipe_ID': 'FV1N8105', 'Titan_Time': '2024-09-03 03:03', 'measure_cnt': '', 'Last_PH_TIME': '', 'PH_STEP': '', 'PH_EQ': '', 'csv': 'http://10.31.21.21/result/FV/8105/20240903030325_FV24G8SR30P01.csv'}
+]
+
+@app.route('/')
+def index():
+    return render_template('index.html')
+
+@app.route('/search', methods=['GET'])
+def search():
+    # 獲取表單的日期和其他參數
+    start_date = request.args.get('st')
+    end_date = request.args.get('et')
+    lot_id = request.args.get('lotid')
+    recipe = request.args.get('Recipe')
+
+    # 模擬資料查詢邏輯（這裡直接返回data）
+    filtered_data = [d for d in data if (lot_id in d['Lot_ID']) and (recipe in d['Recipe_ID'])]
+
+    return render_template('result.html', data=filtered_data, start_date=start_date, end_date=end_date)
+
+if __name__ == '__main__':
+    app.run()
+
+=======================================================================================================================================
+#index
+
+# <!DOCTYPE html>
+# <html>
+# <head>
+#     <title>Titan AR Data</title>
+#     <link rel="stylesheet" href="https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/css/bootstrap.min.css">
+# </head>
+# <body>
+#     <div class="container">
+#         <h1>Titan AR Data</h1>
+        
+#         <form method="GET" action="/search">
+#             <div class="form-group">
+#                 <label for="st">Start Date:</label>
+#                 <input type="datetime-local" class="form-control" id="st" name="st" value="2024-09-02T00:22">
+#             </div>
+#             <div class="form-group">
+#                 <label for="et">End Date:</label>
+#                 <input type="datetime-local" class="form-control" id="et" name="et" value="2024-09-06T12:22">
+#             </div>
+#             <div class="form-group">
+#                 <label for="lotid">LOT_ID:</label>
+#                 <input type="text" class="form-control" id="lotid" name="lotid" placeholder="可輸入前N碼">
+#             </div>
+#             <div class="form-group">
+#                 <label for="Recipe">Recipe:</label>
+#                 <input type="text" class="form-control" id="Recipe" name="Recipe">
+#             </div>
+#             <button type="submit" class="btn btn-primary">Submit</button>
+#         </form>
+        
+#         <div class="mt-4">
+#             {{ table_html|safe }}
+#         </div>
+#     </div>
+# </body>
+# </html>
+=======================================================================================================================================
+#result
+
+# <!DOCTYPE html>
+# <html>
+# <head>
+#     <title>Titan AR Data Results</title>
+#     <link rel="stylesheet" href="https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/css/bootstrap.min.css">
+#     <style>
+#         body {
+#             font-size: 16px; /* 調整字體大小 */
+#         }
+#         table {
+#             width: 100%;
+#             margin-top: 20px;
+#             border-collapse: collapse;
+#         }
+#         table, th, td {
+#             border: 1px solid black;
+#         }
+#         th, td {
+#             padding: 8px;
+#             text-align: left;
+#         }
+#         th {
+#             background-color: #f2f2f2;
+#         }
+#     </style>
+# </head>
+# <body>
+#     <div class="container">
+#         <h2>Titan AR Data Results</h2>
+#         <table>
+#             <tr>
+#                 <th>Lot_ID</th>
+#                 <th>Slot_No</th>
+#                 <th>Glass_ID</th>
+#                 <th>OP_NO</th>
+#                 <th>DEV_NO</th>
+#                 <th>Recipe_ID</th>
+#                 <th>Titan_Time</th>
+#                 <th>CSV</th>
+#             </tr>
+#             {% for row in data %}
+#             <tr>
+#                 <td>{{ row['Lot_ID'] }}</td>
+#                 <td>{{ row['Slot_No'] }}</td>
+#                 <td><a href="CDOVL_V2.php?Sheet_id={{ row['Glass_ID'] }}&Recipe_ID={{ row['Recipe_ID'] }}" target="_blank">{{ row['Glass_ID'] }}</a></td>
+#                 <td>{{ row['OP_NO'] }}</td>
+#                 <td>{{ row['DEV_NO'] }}</td>
+#                 <td>{{ row['Recipe_ID'] }}</td>
+#                 <td>{{ row['Titan_Time'] }}</td>
+#                 <td><a href="{{ row['csv'] }}" target="_blank">CSV</a></td>
+#             </tr>
+#             {% endfor %}
+#         </table>
+#         <a href="/" class="btn btn-primary mt-3">Back to Search</a>
+#     </div>
+# </body>
+# </html>
+=======================================================================================================================================
+#index(原版)
+
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Titan AR Data</title>
+</head>
+<body>
+<form action="AR_Titan_Data_V2.php" method=GET >Start Date: </span><input type="datetime-local" name="st" value="2024-09-02 00:22">   </span></span> End Date: </span> <input type="datetime-local" name="et" value="2024-09-06 18:22:00"> <br><span>LOT_ID:  </span><input type="text" id = "lotid" name="lotid" > 可輸前n碼<BR><span>Recipe : </span><input type="text" id = "Recipe" name="Recipe" > <BR>  <input type=submit value=Submit></form><br>FV24G8SR30<H2>Titan AR Data</H2><BR>Select [DEV_NO],convert(char(19),SE_DATE,120) [SE_DATE],convert(char(19),MS_DATE,120)[MS_DATE],convert(char(19),ME_DATE,120) [ME_DATE]
+            ,[Glass_ID],[Lot_ID],[Slot_No],[OP_NO],[Recipe_ID],[measure_cnt],[csv_floder],convert(char(19),LAST_PH_TIME,120) LAST_PH_TIME , PH_STEP, PH_EQ
+          FROM [ArrayPH].[dbo].[AR_Titan]    where [se_date] > '' 
+          and [se_date] < '2024-09-06 18:22:00'     and substring(Glass_ID,1,len('FV24G8SR30')) ='FV24G8SR30' Order by convert(char(19),SE_DATE,120),[Lot_ID],[Slot_No] <BR><span style='font-size: 12px;'><br><table  style="border:3px #cccccc solid;" cellpadding="2" border=1><tr><td>Lot_ID</td><td>Slot_No</td><td>Glass_ID</td><td>OP_NO</td><td>DEV_NO</td><td>Recipe_ID</td><td>Titan_Time</td><td>measure_cnt</td><td>Last_PH_TIME</td><td>PH_STEP</td><td>PH_EQ</td><td>CSV File</td></tr> <tr><td>FV24G8SR30</td><td>1</td><td><a href=CDOVL_V3.php?Sheet_id=FV24G8SR30P01&Recipe_ID=8105&chk_image=N  target=_blank><div style ='text-align:left;'><span style='font-size: 14px;'>FV24G8SR30P01</a></td><td>1060</td><td>4</td><td>FV1N8105</td><td>2024-09-03 03:03</td><td></td><td></td><td></td><td></td><td><a href=http://10.31.21.21/result/FV/8105/20240903030325_FV24G8SR30P01.csv>csv</a></td></tr> <tr><td>FV24G8SR30</td><td>2</td><td><a href=CDOVL_V3.php?Sheet_id=FV24G8SR30P02&Recipe_ID=8105&chk_image=N  target=_blank><div style ='text-align:left;'><span style='font-size: 14px;'>FV24G8SR30P02</a></td><td>1060</td><td>4</td><td>FV1N8105</td><td>2024-09-03 03:16</td><td></td><td></td><td></td><td></td><td><a href=http://10.31.21.21/result/FV/8105/20240903031613_FV24G8SR30P02.csv>csv</a></td></tr> <tr><td>FV24G8SR30</td><td>3</td><td><a href=CDOVL_V3.php?Sheet_id=FV24G8SR30P03&Recipe_ID=8105&chk_image=N  target=_blank><div style ='text-align:left;'><span style='font-size: 14px;'>FV24G8SR30P03</a></td><td>1060</td><td>4</td><td>FV1N8105</td><td>2024-09-03 03:28</td><td></td><td></td><td></td><td></td><td><a href=http://10.31.21.21/result/FV/8105/20240903032848_FV24G8SR30P03.csv>csv</a></td></tr> <tr><td>FV24G8SR30</td><td>16</td><td><a href=CDOVL_V3.php?Sheet_id=FV24G8SR30P16&Recipe_ID=8105&chk_image=N  target=_blank><div style ='text-align:left;'><span style='font-size: 14px;'>FV24G8SR30P16</a></td><td>1060</td><td>4</td><td>FV1N8105</td><td>2024-09-03 03:49</td><td></td><td></td><td></td><td></td><td><a href=http://10.31.21.21/result/FV/8105/20240903034917_FV24G8SR30P16.csv>csv</a></td></tr> <tr><td>FV24G8SR30</td><td>17</td><td><a href=CDOVL_V3.php?Sheet_id=FV24G8SR30P17&Recipe_ID=8105&chk_image=N  target=_blank><div style ='text-align:left;'><span style='font-size: 14px;'>FV24G8SR30P17</a></td><td>1060</td><td>4</td><td>FV1N8105</td><td>2024-09-03 04:01</td><td></td><td></td><td></td><td></td><td><a href=http://10.31.21.21/result/FV/8105/20240903040154_FV24G8SR30P17.csv>csv</a></td></tr> <tr><td>FV24G8SR30</td><td>18</td><td><a href=CDOVL_V3.php?Sheet_id=FV24G8SR30P18&Recipe_ID=8105&chk_image=N  target=_blank><div style ='text-align:left;'><span style='font-size: 14px;'>FV24G8SR30P18</a></td><td>1060</td><td>4</td><td>FV1N8105</td><td>2024-09-03 04:43</td><td></td><td></td><td></td><td></td><td><a href=http://10.31.21.21/result/FV/8105/20240903044311_FV24G8SR30P18.csv>csv</a></td></tr> </table  >
+
+
+</body>
+</html>
+=======================================================================================================================================
+#result2(別廠)
+
+# <!DOCTYPE html>
+# <meta http-equiv="X-UA-Compatible" content="IE=11">
+
+# <html xmlns="http://www.w3.org/1999/xhtml">
+# <head><meta http-equiv="Content-Type" content="text/html; charset=utf-8" /><title>
+# 	ML6AP1 On-line Web Page
+# </title><link href="../CSS/jquery.dataTables.min.css" rel="stylesheet" /><link href="../CSS/THsien/L6AP1_Dashboard.css" rel="stylesheet" />
+#     <script src="../JS/jquery.min.js"></script>
+#     <script src="../JS/datatable/jquery.dataTables.min.js"></script>
+#     <script src="../JS/bootstrap.min.js"></script>
+# <script type="text/javascript">
+#     $(document).get(0).oncontextmenu = function () {
+#         return false
+#     };
+# </script>
+# <style type="text/css">
+# body {font-family: "Arial";font-size: 90%;}
+# </style>
+# </head>
+# <body>
+#     <form method="post" action="./L6AP1.aspx" id="form1">
+# <div class="aspNetHidden">
+# <input type="hidden" name="__VIEWSTATE" id="__VIEWSTATE" value="/wEPDwUKMTQzODkxODIyMWRkpyaD1FEhl/19j4vtyseS/XQ9aceT08Z+ymDkBQi5pS8=" />
+# </div>
+
+# <div class="aspNetHidden">
+
+# 	<input type="hidden" name="__VIEWSTATEGENERATOR" id="__VIEWSTATEGENERATOR" value="38B62989" />
+# </div>
+#         <div><table><tr>
+#                 <td width="10px"><img src='../Img/favicon_48.ico'></td>
+#                 <td><button type="button" id="switch_SAMP_OLD"  class="button btn_click">量儀資訊</button></td>
+#                 <td><button type="button" id="switch_Online"  class="button">Dose補值</button></td>
+#                 <td><button type="button" id="switch_IMG"  class="button">AAIMF-CD/OL</button></td>
+
+                
+#                 <td><button type="button" id="switch_HOLD"  class="button">Hold Info</button></td>
+#                 <td><button type="button" id="switch_SCRAP"  class="button">Scrap</button></td>
+#                 <td width="15px"></td>
+#                 <td><button type="button" id="switch_MASK"  class="button">機台光罩</button></td>
+                
+#                 <td><button type="button" id="switch_Trace"  class="button">製造前導批</button></td>
+#                 <td><button type="button" id="switch_OEE"  class="button">OEE</button></td>
+                
+#              </table>
+#              <hr style="border-top: 1px dashed #8c8b8b;">
+#             <table><tr><td><span id="table_loading">Data loading...  Please wait a moment.</span></tr></table>
+#              <iframe id='switch_iframe' style="border-style: none; width: 100%; height: 2400px;" class="tr_class" src="http://10.97.32.183/L6AP1/Sampling_File.aspx"></iframe>
+#              <table id="Table_DT"><tr><td><div id="Restrict_table"></div><div id="DTH_table"></div></td></tr></table>
+#         <div class="modal fade" id="showEvent">
+#             <div id="modal_frame" class="modal-dialog2 showEventModal">
+#                 <div class="modal-content">
+#                     <div class="modal-body">
+#                             <div class="_HisPanel">
+#                                 <p id="eventHisUrl">
+#                             </div>
+#                     </div>
+#                     <div class="modal-footer"><button type="button" class="btn btn-info btn-block" data-dismiss="modal">Close</button></div>
+#                 </div>
+#             </div>
+#         </div>
+#         </div>
+#     <script src="../JS/THsien/L6AP1_Dashboard.js"></script>
+#     <script src="../JS/THsien_jquery_plugin.js"></script>
+#     </form>
+# </body>
+# </html>
