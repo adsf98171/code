@@ -1,0 +1,1010 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>CD/OVL Data</title>
+
+</head>
+<body>
+
+  <meta http-equiv="Content-Type" content="text/html; charset=utf8"> ';
+
+
+<?php
+    // require_once("../ChartDirector/lib/phpchartdir.php");
+    require_once ("C:\AppServ\www\charts\jpgraph\src\jpgraph.php");
+    require_once ("C:\AppServ\www\charts\jpgraph\src\jpgraph_canvas.php");
+
+    //session_start();
+
+    date_default_timezone_set('Asia/Taipei');
+
+    set_time_limit(0);
+    error_reporting(E_ALL^E_NOTICE^E_WARNING);
+    ini_set("memory_limit","1000M");
+
+    $serverName = "10.30.163.208";
+    $connectionOptions = array(
+      "UID" => "sa",
+      "PWD" => "Auol6bi1",
+      "CharacterSet" => "UTF-8"
+    );    
+    $mssql_conn = sqlsrv_connect($serverName, $connectionOptions);
+
+    $sql = "Select CONVERT(varchar,max([titan_update_time]), 120) as a 
+            From ArrayPH.dbo.AR_Titan
+          ";
+
+    echo '<BR> '.$sql.'<BR>';
+    $result = sqlsrv_query($mssql_conn, $sql);   //select Table_1資料表
+
+    while( $row = sqlsrv_fetch_array($result, SQLSRV_FETCH_ASSOC) )
+    { $AA = $row['a'] ;}
+
+    echo $AA ;
+    $AA = '2024-09-18 05:00';
+
+    $AA = date("Y-m-d H:i:s",strtotime("-2 hour",strtotime($AA)));
+
+    $DDD = date('Y-m-d H:i:s', time()); 
+    $EEE = date('Y-m-d H:i:s', time()); 
+
+GTV:
+    $st = date("Y-m-d H:i:s",strtotime("0 hour",strtotime($AA)));
+    $et = date("Y-m-d H:i:s",strtotime("+1 hour",strtotime($st)));
+
+    if ($et > date("Y-m-d H:i",strtotime("now-5 minute",time())) ){
+      echo '<BR>END:: st-'.$st.'; et-'.$et.'- now = '.date("Y-m-d H:i:s",strtotime("now-20 minute",time())) ;
+      goto GTE;
+    }
+    $jk++ ; 
+    if ( $jk > 1 ){
+      echo '<BR>END:: st-'.$st.'; et-'.$et;
+      goto GTE;
+    }
+
+    echo '<BR>  st-'.$st.'; et-'.$et;
+//exit ;
+
+##由Titan撈取AR量測清單
+    $sql = "Select lot_key_no LOT_ID, lot_no||kiban_no SHEET_ID,DEV_KIND,OP_NO,DEV_NO,a.DEV_RECIPE,SLOT_NO,c.CHAMBER_ID as CHAMBER
+              ,to_char(se_date,'yyyy/mm/dd hh24:mi:ss') SE_DATE,to_char(ms_date,'yyyy/mm/dd hh24:mi:ss') MS_DATE,to_char(ME_date,'yyyy/mm/dd hh24:mi:ss') ME_DATE
+              ,to_char(upd_date,'yyyy/mm/dd hh24:mi:ss') UPD_DATE
+            from titan.kiban_table a,titan.REV_SUBKIBAN c 
+            where  dev_kind in (8) and a.KIBAN_SEQ= c.KIBAN_SEQ 
+              and upd_date between to_date('".$st."','yyyy/mm/dd hh24:mi:ss') and to_date('".$et."','yyyy/mm/dd hh24:mi:ss')  
+            Order by DEV_NO,c.CHAMBER_ID,lot_key_no,dev_kind,se_date,me_date
+        ";
+
+    echo '<BR> '.$sql.'<BR>';
+
+    $par=array('sql'=> $sql);
+    $c_WSDL_URL = 'http://10.30.10.17:3000/RPTWebServices/L6BServices.asmx?wsdl';
+    $sc_L6BServices= new SoapClient($c_WSDL_URL);
+    $xs=$sc_L6BServices->GetTTNbySql($par) or die("無法連接WebService");
+    $obj=simplexml_load_string($xs->GetTTNbySqlResult);
+    //$xs = $sc_L6BServices->GetAryODS($par) or die("Failed WebService");
+    //$obj = simplexml_load_string($xs->GetAryODSResult);
+
+    $AR_Hist=array();
+    $record_count = 0;
+    foreach( $obj->Table as $c )
+    {
+      $AR_Hist[$record_count][0] = $c->LOT_ID ;
+      $AR_Hist[$record_count][1] = $c->SHEET_ID ;
+      $AR_Hist[$record_count][2] = $c->DEV_KIND ;
+      $AR_Hist[$record_count][3] = $c->OP_NO ;
+      $AR_Hist[$record_count][4] = $c->DEV_NO ;
+      if ( $c->CHAMBER <>'-') {$AR_Hist[$record_count][5] = $c->CHAMBER ;}
+      $AR_Hist[$record_count][6] = $c->DEV_RECIPE ;
+      $AR_Hist[$record_count][7] = $c->SLOT_NO ;
+      $AR_Hist[$record_count][8] = $c->SE_DATE ;
+      $AR_Hist[$record_count][9] = $c->MS_DATE ;
+      $AR_Hist[$record_count][10] = $c->ME_DATE ;
+      $AR_Hist[$record_count][14] = $c->UPD_DATE ;
+      $record_count++;
+    }
+
+    ###抓取ARYODS.H_SHEET_TRANS_ODS資料,確認前程黃光時間
+    ###因可能是ENG run,故不抓H_SHEET_OPER_ODS
+    for ($i= 0 ; $i < count($AR_Hist) ; $i++){
+
+      $sql = "Select OP_SEQ,EQP_ID,to_char(TRANS_TIMESTAMP,'yyyy/mm/dd hh24:mi') as TRANS_TIME
+              From /*+ index(H_SHEET_TRANS_ODS_ID04)*/ARYODS.H_SHEET_TRANS_ODS 
+              where SHEET_ID_CHIP_ID = '".$AR_Hist[$i][1]."' 
+                and TRANS_TIMESTAMP between to_date('".date("Y-m-d H:i:s",strtotime("-24 hour",strtotime($AR_Hist[$i][9])))."','yyyy-mm-dd hh24:mi:ss') 
+                      and to_date('".date("Y-m-d H:i:s",strtotime("+1 hour",strtotime($AR_Hist[$i][9])))."','yyyy-mm-dd hh24:mi:ss') 
+                      and substr(EQP_ID,1,2) ='CA' and TRANS_ID = 'LOGF'
+              Order by to_char(TRANS_TIMESTAMP,'yyyy/mm/dd hh24:mi') 
+            ";
+
+      //echo '<BR>'.$sql.'<BR>';
+
+      $par=array('sql'=> $sql);
+      $c_WSDL_URL = 'http://10.30.10.17:3000/RPTWebServices/L6BServices.asmx?wsdl';
+      $sc_L6BServices= new SoapClient($c_WSDL_URL);
+      $xs = $sc_L6BServices->GetDCODS($par) or die("Failed WebService");
+      $obj = simplexml_load_string($xs->GetDCODSResult);
+
+      foreach( $obj->Table as $o )
+      {
+        $AR_Hist[$i][11] = $o->TRANS_TIME ;
+        $AR_Hist[$i][12] = $o->OP_SEQ ;
+        $AR_Hist[$i][13] = $o->EQP_ID ;
+      }
+    }
+
+
+  //goto QQE;
+    //echo '<br>';
+    echo '<table  style="border:3px #cccccc solid;" cellpadding="2" border=1>';
+    for ($i=0 ; $i < count($AR_Hist) ; $i++){
+      echo '<tr>';
+      for ($j = 0;$j<count($AR_Hist[0]);$j++){
+        echo "<td><span style='font-size: 12px;'>".$AR_Hist[$i][$j]."</td>";
+      }
+      echo '</tr> ';
+    }echo '</table  >';
+QQE:
+    
+    echo '<br>*all:'.( strtotime(date('Y-m-d H:i:s', time())) - strtotime($DDD) ).'sec' ;
+    $DDD = date('Y-m-d H:i:s', time());
+
+
+
+
+    $serverName = "10.30.163.208";
+    $connectionOptions = array(
+      "UID" => "sa",
+      "PWD" => "Auol6bi1",
+      "CharacterSet" => "UTF-8"
+    );
+    $mssql_conn = sqlsrv_connect($serverName, $connectionOptions);
+
+    if (!$mssql_conn) {
+      die("資料庫連線失敗: " . print_r(sqlsrv_errors(), true));
+    }
+
+
+##抓取AR機台端csv檔案
+    $aContext = array(
+      'http' => array(
+        'proxy'           => 'tcp://10.31.10.188:8080',
+        'request_fulluri' => true,
+      ),
+    );
+
+    $cxContext = stream_context_create($aContext);  
+
+    for ( $i =0 ; $i < count($AR_Hist) ; $i++){
+
+      $sql = "select Glass_ID ,measure_cnt
+              From ArrayPH.dbo.AR_Titan
+              Where Glass_ID = '".$AR_Hist[$i][1]."' and  ME_DATE = '".$AR_Hist[$i][10]."'  
+            ";
+
+      echo '<BR>'.$sql.'<BR>';   
+      $cnt = 0 ;             
+      $result = sqlsrv_query($mssql_conn, $sql);   //select Table_1資料表
+      while( $row = sqlsrv_fetch_array($result, SQLSRV_FETCH_ASSOC) )
+      {    
+        //$cnt++;
+        $cnt = $row['measure_cnt'] ;
+      }
+      if ($cnt > 0) {  ##已撈過的不再撈取
+        //echo 'By Pass!!' ;
+        //goto RTR ;    ##暫不啟動
+      }
+
+      unset($img_data) ;
+      $img_data =array() ; 
+
+      $DDD = date('Y-m-d H:i:s', time());
+      
+      $se_date = trim($AR_Hist[$i][9])  ; 
+      $se_date = substr($se_date,0,4).substr($se_date,5,2).substr($se_date,8,2).substr($se_date,11,2).substr($se_date,14,2).substr($se_date,17,2) ;
+
+      if ( strlen($AR_Hist[$i][7]) == 1 ) {
+        $slotid = $AR_Hist[$i][0].'P0'.$AR_Hist[$i][7] ;
+      }else{
+        $slotid = $AR_Hist[$i][0].'P'.$AR_Hist[$i][7] ;
+      }  
+      echo '<br><H3>
+'.$i.'--glass id ='.$AR_Hist[$i][1].'--slotid ='.$slotid.'-'.$se_date.'</H3>' ; 
+
+      ### 先撈取$folder_img的清單$link_data
+      if ( count($link_data) > 0 and trim($temp_EQ) == trim($AR_Hist[$i][4]) and trim($temp_CH) == trim($AR_Hist[$i][5]) and trim($AR_Hist[$i][4]) <> 4 ){ goto RTB ;}
+
+      echo '要跑link_data: '.count($link_data).'-'.trim($temp_EQ).'+'.trim($AR_Hist[$i][4]).'-'.trim($temp_CH).'+'.trim($AR_Hist[$i][5]) ;
+
+      $folder_img ='' ;
+      $fileURL = '' ;
+      $link_data =  array() ;
+      $record_count = 0 ;
+      if ($AR_Hist[$i][4] == 1 and $AR_Hist[$i][5] == 'A' ){
+        $measure_cnt = 'AR-01CA' ;
+        goto TGB ;        
+      }elseif ($AR_Hist[$i][4] == 1 and $AR_Hist[$i][5] == 'B' ){        
+        $folder_img = "http://10.31.21.31/image/ar/";
+      }elseif( $AR_Hist[$i][4] == 2 ){
+        $folder_img = "http://10.31.26.7/image/AR/";
+      }elseif( $AR_Hist[$i][4] == 4 ){
+        $folder_img = "http://10.31.21.21/image/";
+        ##AR-04C多一層
+        $filename ='' ;
+        $html = file_get_contents($folder_img, false, $cxContext);
+
+        $dom = new DOMDocument();
+        @$dom->loadHTML($html);
+
+        $links = $dom->getElementsByTagName('a');
+
+        foreach($links as $link){
+
+          $href = $link->getAttribute('href');
+          $filename = basename($href);
+    
+          if($filename == ".." or $filename == ".") continue;
+
+          $chk_date = '20'.substr(substr($filename,-13),0,2).'/'.substr(substr($filename,-13),2,2).'/'.substr(substr($filename,-13),4,2)
+                      .' '.substr(substr($filename,-13),7,2).':'.substr(substr($filename,-13),9,2).':'.substr(substr($filename,-13),11,2) ;
+
+          //echo '<br>ME delta: '.date('Y-m-d H:i:s', strtotime($chk_date)).':::'.$se_date.'==='.(ABS(strtotime($chk_date)-strtotime($AR_Hist[$i][9]))) ;
+
+          if( substr($filename,0,13) == substr($slotid,0,10).'_'.substr($slotid,11,2) and ABS(strtotime($chk_date)-strtotime($AR_Hist[$i][9])) <180 ) {
+            $folder_img = $folder_img.$filename ;
+            goto RTA ;
+          }
+        }
+      }
+    RTA:  
+      echo '<br>Img_folder: '.$AR_Hist[$i][1].'-'.$AR_Hist[$i][4].'-'.$folder_img ; 
+      
+      $filename ='' ;
+      $html = file_get_contents($folder_img, false, $cxContext);
+
+      $dom = new DOMDocument();
+      @$dom->loadHTML($html);
+
+      $links = $dom->getElementsByTagName('a');
+
+      foreach($links as $link){
+
+        $href = $link->getAttribute('href');
+        $filename = basename($href);
+    
+        if($filename == ".." or $filename == "." ) continue;
+
+        if ( strtoupper(substr( $filename,-3)) == 'JPG' or strtoupper(substr( $filename,-3)) == 'BMP' ){
+          $link_data[$record_count] = $filename ;
+          $record_count++ ;
+        }
+
+      }
+      
+      //print_r($link_data) ;
+    RTB:  
+      echo '<br>*link_data List : '.(strtotime(date('Y-m-d H:i:s', time())) - strtotime($DDD) ).'sec ======= '.$folder_img ;
+      $DDD = date('Y-m-d H:i:s', time());     
+
+      ### AR-01.02C沒有上報Recipe ID,所以要撈取 Image file name 判讀
+      if ( $AR_Hist[$i][4] == 1 or $AR_Hist[$i][4] == 2 ){
+        foreach($link_data as $filename){
+          if( substr($filename,0,13) == substr($slotid,0,10).'_'.substr($slotid,11,2) ) {
+            $AR_Hist[$i][6] = substr($filename,14,4) ;
+            goto RTC ;
+          }
+        }
+      }
+    RTC:
+      echo "<br>檔案名稱：".$slotid.'-'.$Sheet_id.'--' . $folder_img. ",Recipe：" . $AR_Hist[$i][6].'    old csv folder(上一個) = ' .$folder  ;
+
+      if ( $AR_Hist[$i][6] =='' or $AR_Hist[$i][6] =='-' ){
+        echo '<br><H3>No Recipe ID!!</H3><br>' ;
+        print_r(json_encode($link_data)) ;
+        $measure_cnt = 'img unfind' ;
+        goto TGB ;
+      }
+
+
+      if ( $temp_EQ == $AR_Hist[$i][4]  and $temp_CH == $AR_Hist[$i][5] and $temp_recipe == $AR_Hist[$i][6] ){ goto IOP;}
+
+      if ($AR_Hist[$i][4] == 1 and $AR_Hist[$i][5] == 'A' ){
+        $folder = "" ;
+      }elseif ($AR_Hist[$i][4] == 1 and $AR_Hist[$i][5] == 'B' ){
+        $folder = "http://10.31.21.31/result/" ;
+      }elseif ($AR_Hist[$i][4] == 2  ){
+        $folder = "http://10.31.26.7/result/" ;
+      }elseif ($AR_Hist[$i][4] == 4  ){
+        $folder = "http://10.31.21.21/result/" ;
+      }
+
+      ##Special特殊條件
+      if ( $AR_Hist[$i][4] == 1 or $AR_Hist[$i][4] == 2 ){
+        if ( substr($AR_Hist[$i][1],0,2) =='SG' ){
+          $chk_model = 'SH' ;
+        }elseif ( substr($AR_Hist[$i][1],0,2) =='SZ' ){
+          $chk_model = 'SZ1' ;
+        }elseif ( substr($AR_Hist[$i][1],0,2) =='HP' ){
+          $chk_model = 'HP1' ;
+        }elseif ( substr($AR_Hist[$i][1],0,2) =='LA' ){
+          $chk_model = 'LA1' ;
+        }else{
+          $chk_model = substr($AR_Hist[$i][1],0,2) ;
+        }
+      }elseif( $AR_Hist[$i][4] == 4 ){
+        if ( (substr($AR_Hist[$i][1],0,3) =='FR8' and (float)substr($AR_Hist[$i][6],-4) >= 1800 and (float)substr($AR_Hist[$i][6],-4) < 1900 ) 
+            or (substr($AR_Hist[$i][1],0,3) =='FX2' and (float)substr($AR_Hist[$i][6],-4) >= 5700 and (float)substr($AR_Hist[$i][6],-4) < 5800 )
+            ){
+          $chk_model = substr($AR_Hist[$i][1],0,3) ;
+        }else{
+          $chk_model = substr($AR_Hist[$i][1],0,2) ;
+        }
+      }else{
+        $chk_model = substr($AR_Hist[$i][1],0,2) ;
+      }
+
+      $html = file_get_contents($folder, false, $cxContext);
+
+      $dom = new DOMDocument();
+      @$dom->loadHTML($html);
+
+      $links = $dom->getElementsByTagName('a');
+
+      foreach($links as $link){
+        $href = $link->getAttribute('href');
+        $filename = basename($href);
+  
+        if($filename == ".." or $filename == ".") continue;
+        //echo '<br>='.$filename.'-'.$AR_Hist[$i][1] ;
+        if( substr($filename,-(strlen($chk_model))) == $chk_model ) {
+          goto RTY ;
+        }
+      }
+
+      $measure_cnt = substr($AR_Hist[$i][1],0,2).' un-find' ;
+      goto TGB; 
+      
+    RTY:
+
+      $folder = $folder.$filename."/" ;
+
+      $html = file_get_contents($folder, false, $cxContext);
+
+      $dom = new DOMDocument();
+      @$dom->loadHTML($html);
+
+      $links = $dom->getElementsByTagName('a');
+
+      ##recipe 有變
+      if ( substr($AR_Hist[$i][1],0,2) == 'FV' and (float)substr($AR_Hist[$i][6],-4) == 8163 ){
+        $recipe = 8173 ;
+      }else{
+        $recipe = substr($AR_Hist[$i][6],-4) ;
+      }
+      echo '<br>syn='.$folder.'-recipe='.$recipe ;
+
+      foreach($links as $link){
+        $href = $link->getAttribute('href');
+        $filename = basename($href);
+  
+        if($filename == ".." or $filename == ".") continue;
+        if( $filename == $recipe ) {
+          goto RTU ;
+        }
+      }
+      RTU:
+      if ( $filename <> $recipe ){ goto RTR; }
+      $folder = $folder.$filename."/" ;
+
+IOP: 
+      $html = file_get_contents($folder, false, $cxContext);
+
+      $dom = new DOMDocument();
+      @$dom->loadHTML($html);
+
+      $links = $dom->getElementsByTagName('a');
+
+      foreach($links as $link){
+        $href = $link->getAttribute('href');
+        $filename = basename($href);
+  
+        if($filename == ".." or $filename == ".") continue;
+
+        //echo '<br>$filename='.substr($filename,15,13).'-'.$AR_Hist[$i][0].'P'.$AR_Hist[$i][7] ; 
+        if ($AR_Hist[$i][4] == 1 and $AR_Hist[$i][5] == 'A' ){
+          if( $filename == $se_date.'.dat' ) {
+            goto RTV ;
+          }
+        }elseif ($AR_Hist[$i][4] == 1 and $AR_Hist[$i][5] == 'B' ){
+          if( $filename == $se_date.'.dat' ) {
+            goto RTV ;
+          }
+        }elseif ($AR_Hist[$i][4] == 2  ){
+          //echo '<br>se_date = '.$AR_Hist[$i][9].'-'.$se_date.'-vs-'.$filename ;
+          if( $filename == $se_date.'.dat' ) {
+            goto RTV ;
+          }
+        }elseif ($AR_Hist[$i][4] == 4  ){
+          $chk_date = substr($filename,0,4).'/'.substr($filename,4,2).'/'.substr($filename,6,2)
+                      .' '.substr($filename,8,2).':'.substr($filename,10,2).':'.substr($filename,12,2) ;
+
+          //echo '<br>ME delta: '.$filename.'-'.date('Y-m-d H:i:s', strtotime($chk_date)).':::'.$se_date.'==='.(ABS(strtotime($chk_date)-strtotime($AR_Hist[$i][10]))) ;  
+
+          if( substr($filename,15,13) == $slotid and ABS(strtotime($chk_date)-strtotime($AR_Hist[$i][10])) <180 ) {
+            goto RTV ;
+          }
+        }
+      }
+      RTV:
+
+      $fileURL = $folder.$filename ; 
+      echo '<br>csv : '.$fileURL.'-EQ:'.$AR_Hist[$i][4].'-'.$slotid ;       
+      //echo '<br>Image資料夾=='.substr($filename,15,13).'--'.$AR_Hist[$i][0].'P0'.$AR_Hist[$i][7] ;
+      if ( $AR_Hist[$i][4] == 1 and $AR_Hist[$i][5] == 'A' and $AR_Hist[$i][4] == 4 and $filename <> $se_date.'.dat' ){
+        goto RTR;
+      }elseif ( $AR_Hist[$i][4] == 1 and $AR_Hist[$i][5] == 'B' and $filename <> $se_date.'.dat' ){ 
+        goto RTR; 
+      }elseif ( $AR_Hist[$i][4] == 2 and $filename <> $se_date.'.dat' ){ 
+        goto RTR; 
+      }elseif ( $AR_Hist[$i][4] == 4 and substr($filename,15,13) <> $slotid ){ 
+        goto RTR; 
+      }
+
+      $localFileName = "data.csv";
+
+      file_put_contents($localFileName, file_get_contents($fileURL, false, $cxContext));
+
+      echo '<br>*find file : '.(strtotime(date('Y-m-d H:i:s', time())) - strtotime($DDD) ).'sec ======= '.$fileURL ;
+      $DDD = date('Y-m-d H:i:s', time());      
+      
+    ##撈取CSV檔AR資料
+      $measure_cnt = 0 ;
+      AR_DATA($localFileName,$AR_Hist[$i][4],$AR_Hist[$i][10],$test_data) ;
+    
+      $measure_cnt = count($test_data) ;
+
+      echo '<br>*lens & insert AR : '.(strtotime(date('Y-m-d H:i:s', time())) - strtotime($DDD) ).'sec'.'--$measure_cnt=='.$measure_cnt ;
+      $DDD = date('Y-m-d H:i:s', time());
+  
+  //exit ;
+      $mssql_conn = sqlsrv_connect($serverName, $connectionOptions);
+
+      if (!$mssql_conn) {
+        die("資料庫連線失敗: " . print_r(sqlsrv_errors(), true));
+      }
+
+  //goto TGB ;
+
+      #照片存檔---> 檔案量太大,先不存檔
+      $temp_path = "C:\AppServ\www\PH_monitor/".substr($se_date,0,8) ;
+      //if (!file_exists($temp_path)) { mkdir($temp_path, 0777, true); }
+      $temp_path .= "/".$se_date.'_'.$recipe.'_'.$AR_Hist[$i][1] ;
+      //if (!file_exists($temp_path)) { mkdir($temp_path, 0777, true); }
+      echo '<br>image folder:'.$folder_img.' to '.$temp_path.'---$link_data: '.count($link_data) ; 
+
+      unset($img_data) ;
+      $img_data =array() ; 
+      $record_count = 0 ;
+      foreach($link_data as $filename){
+      
+        if ( strtoupper(substr( $filename,-3)) == 'JPG' or strtoupper(substr( $filename,-3)) == 'BMP' ){
+          if ( (substr($slotid,0,10).'_'.substr($slotid,11,2)  == substr($filename,0,13)) or ( substr($slotid,0,10).'_'.substr($slotid,11,2) == substr($filename,4,13) )  ){
+            $img_data[$record_count] = $filename ;
+            //echo '<br> as '.substr($slotid,0,10).'_'.substr($slotid,11,2).' ==== '.$filename ; 
+            $record_count++ ;
+          }
+        }
+      }      
+
+      //print_r($img_data) ;
+      echo '<br>image folder:'.$folder_img.' Img file count : '.count($img_data) ; 
+
+      $url = $folder_img .'/'. $filename ;    
+        
+      foreach($img_data as $filename){
+    
+        $url1 = '' ;
+        $url2 = '' ;
+        for ($j=0 ; $j < count($test_data) ; $j++){  
+
+          $url = $folder_img .'/'. $filename ;    
+          //echo '<br>filename=='.$url ;
+          //$fileContent = file_get_contents($url, false, $cxContext); *****************************照片存檔還沒開
+          //file_put_contents($temp_path.'/'.$filename, $fileContent); 
+
+          if ( substr($AR_Hist[$i][4],-1) == 1 or substr($AR_Hist[$i][4],-1) == 2 ){
+            if ( strlen((float)$test_data[$j][0]) == 1 ){
+              $pointno = '_0'.(float)$test_data[$j][0] ;
+            }else{
+              $pointno = '_'.(float)$test_data[$j][0] ;
+            }
+          
+            if ( $pointno == substr(substr($filename,-9),0,3) ){
+              $url1 = $folder_img.'/'.$filename ;
+              //echo '<br>=='.$j.'_'.$pointno.'-'.substr($filename,-9) ;
+              goto WSX;
+            }elseif ( $pointno == substr(substr($filename,-9),0,4) ){
+              $url1 = $folder_img.'/'.$filename ;
+              goto WSX;
+            }elseif ( $pointno == substr(substr($filename,-10),0,4) ){
+              $url1 = $folder_img.'/'.$filename ;
+              goto WSX;
+            }   
+
+          }elseif ( substr($AR_Hist[$i][4],-1) == 4 ){
+          
+            if ( '_'.$test_data[$j][0].'.JPG' == substr($filename,-9) ){
+              $url1 = $folder_img.'/'.$filename ;
+              goto WSX;
+            }elseif ( '_'.$test_data[$j][0].'.JPG' == substr($filename,-8) ){
+              $url1 = $folder_img.'/'.$filename ;
+              goto WSX;
+            }elseif ( '_'.$test_data[$j][0].'.JPG' == substr($filename,-7) ){
+              $url1 = $folder_img.'/'.$filename ;
+              goto WSX;
+            }elseif ( '_'.$test_data[$j][0].'.JPG' == substr($filename,-6) ){
+              $url1 = $folder_img.'/'.$filename ;
+              goto WSX;
+            }elseif ( '_'.$test_data[$j][0].'.JPG' == substr($filename,-5) ){
+              $url1 = $folder_img.'/'.$filename ;
+              goto WSX;
+            }elseif ( '_'.$test_data[$j][0].'.BMP' == substr($filename,-9) ){
+              $url2 = $folder_img.'/'.$filename ;
+              goto WSX;
+            }elseif ( '_'.$test_data[$j][0].'.BMP' == substr($filename,-8) ){
+              $url2 = $folder_img.'/'.$filename ;
+              goto WSX;
+            }elseif ( '_'.$test_data[$j][0].'.BMP' == substr($filename,-7) ){
+              $url2 = $folder_img.'/'.$filename ;
+              goto WSX;
+            }elseif ( '_'.$test_data[$j][0].'.BMP' == substr($filename,-6) ){
+              //echo '<br>'.'_'.$test_data[$j][0].'.BMP'.'-'.substr($filename,-6) ;
+              $url2 = $folder_img.'/'.$filename ;
+              goto WSX;
+            }elseif ( '_'.$test_data[$j][0].'.BMP' == substr($filename,-5) ){
+              $url2 = $folder_img.'/'.$filename ;
+              goto WSX;
+            }     
+    
+          }
+
+        }
+    WSX:
+        if ( $url1 <>''  ){
+          $sql = "Update ArrayPH.dbo.AR_Measure 
+                  SET Img1= '".$url1."' 
+                  Where Glass_ID = '".$AR_Hist[$i][1]."' and Point_No = '".(float)$test_data[$j][0]."'  and Recipe_ID like '%".(float)substr($AR_Hist[$i][6],-4)."'
+                    and Test_Time between '".date("Y-m-d H:i:s",strtotime("-300 minute",strtotime($AR_Hist[$i][9])))."' 
+                                      and '".date("Y-m-d H:i:s",strtotime("+300 minute",strtotime($AR_Hist[$i][10])))."'   
+              ";
+
+          //echo '<BR>'.$sql.'<BR>';         
+          $result = sqlsrv_query($mssql_conn, $sql); 
+        }elseif ( $url2 <>''  ){
+          $sql = "Update ArrayPH.dbo.AR_Measure 
+                  SET Img2= '".$url2."' 
+                  Where Glass_ID = '".$AR_Hist[$i][1]."' and Point_No = '".(float)$test_data[$j][0]."'  and Recipe_ID like '%".(float)substr($AR_Hist[$i][6],-4)."'
+                    and Test_Time between '".date("Y-m-d H:i:s",strtotime("-300 minute",strtotime($AR_Hist[$i][9])))."' 
+                                      and '".date("Y-m-d H:i:s",strtotime("+300 minute",strtotime($AR_Hist[$i][10])))."'   
+                ";
+
+          //echo '<BR>'.$sql.'<BR>';         
+          $result = sqlsrv_query($mssql_conn, $sql); 
+        }
+      } 
+
+      echo '<br>*Image download  :  '.(strtotime(date('Y-m-d H:i:s', time())) - strtotime($DDD) ).'sec' ;
+      $DDD = date('Y-m-d H:i:s', time());
+
+  TGB:
+  RTR:
+
+      echo '<br><br><H3>measure_cnt =='.$measure_cnt.'</H3>' ;
+
+      $sql = "select Glass_ID ,measure_cnt  
+              From ArrayPH.dbo.AR_Titan
+              Where Glass_ID = '".$AR_Hist[$i][1]."' and  ME_DATE = '".$AR_Hist[$i][10]."'  
+            ";
+
+      //echo '<BR>'.$sql.'<BR>';   
+      $cnt = 0 ;
+      $result = sqlsrv_query($mssql_conn, $sql);   //select Table_1資料表
+      while( $row = sqlsrv_fetch_array($result, SQLSRV_FETCH_ASSOC) )
+      {    
+        //$cnt++;
+        $cnt = $row['measure_cnt'] ;
+      }
+      if ( $cnt == 0 ) {
+        $sql = "Delete From ArrayPH.dbo.AR_Titan 
+                Where Glass_ID = '".$AR_Hist[$i][1]."' and  ME_DATE = '".$AR_Hist[$i][10]."'  ";
+        $result = sqlsrv_query($mssql_conn, $sql);  
+        echo '<BR>delete : '.$cnt.'-'.$sql.'<BR>';        
+
+        $sql = "Insert into ArrayPH.dbo.AR_Titan 
+                (DEV_NO ,SE_DATE,MS_DATE
+                  ,ME_DATE,Glass_ID
+                  ,Lot_ID,Slot_No,Recipe_ID,OP_NO
+                  ,Last_PH_TIME ,PH_STEP, PH_EQ
+                  ,csv_floder ,Img_floder ,measure_cnt ,titan_update_time 
+                ) 
+                Values 
+                ('".$AR_Hist[$i][4].$AR_Hist[$i][5]."','".date("Y/m/d H:i:s",strtotime($AR_Hist[$i][8]))."','".date("Y/m/d H:i:s",strtotime($AR_Hist[$i][9]))."'
+                  ,'".date("Y/m/d H:i:s",strtotime($AR_Hist[$i][10]))."','".$AR_Hist[$i][1]."'
+                  ,'".$AR_Hist[$i][0]."','".$AR_Hist[$i][7]."','".$AR_Hist[$i][6]."','".$AR_Hist[$i][3]."'
+                  ,'".date("Y/m/d H:i:s",strtotime($AR_Hist[$i][11]))."','".$AR_Hist[$i][12]."','".$AR_Hist[$i][13]."' 
+                  ,'".$fileURL."' ,'".$folder_img."' ,'".$measure_cnt."' ,'".date("Y/m/d H:i:s",strtotime($AR_Hist[$i][14]))."'
+                ) ";
+      }
+    
+      echo '<BR>insert: '.$sql.'<BR>';   
+      $result = sqlsrv_query($mssql_conn, $sql);  
+  
+      echo '<br>*insert titan:'.( strtotime(date('Y-m-d H:i:s', time())) - strtotime($DDD) ).'sec' ;
+      
+      $temp_EQ = $AR_Hist[$i][4] ; 
+      $temp_CH = $AR_Hist[$i][5] ;
+      $temp_recipe = $AR_Hist[$i][6] ;
+
+      //echo '<BR>DDD'.$temp_EQ.'-'.$temp_CH.'<BR>' ;
+
+      echo '<br>*total Time 1hr : '.(strtotime(date('Y-m-d H:i:s', time())) - strtotime($EEE) ).'sec =======<br>' ;
+  //exit ;
+    }
+
+    $AA = $et ;
+
+    goto GTV ;
+
+GTE:
+
+//exit ;
+
+function AR_DATA($file,$EQ,$me_date,&$test_data)
+{
+    $stDir = 'C:\AppServ\www\PH_monitor/'; // 原始資料夾路徑
+    //$file = "20240730140805_FV24G7SY70P15.csv";
+    $openfile = fopen(($stDir.$file), "r");
+    echo 'aa='.$file.substr($me_date,5,20) ;
+
+    reset($test_data);
+    $test_data=array();
+    $i1 = 0 ;
+    $i = 0 ;
+    $j = 0 ;
+    while (($data = fgetcsv($openfile)) !== false) {
+      $i1++ ;
+
+      //print_r($data[0]) ;
+      $data_0 = str_replace(' ','',$data[0]) ;
+      //echo '-'.$data_0 ;
+      if ( $i1==2 and substr($data_0,0,7) == 'Machine' ){ $EQ_ID = substr($data_0,-1) ; }
+        if ( is_integer(substr($EQ_ID,-1)) == 0 ){ $EQ_ID = 'AR-0'.$EQ ;}
+      if ( $i1==3 and substr($data_0,0,4) == 'Date' ){ $test_date = substr($data_0,5,20) ; }
+      if ( $EQ_ID == 1 ){
+        if ( $i1==19 and substr($data_0,0,12) == 'Inspect_Time' ){ $test_date = $test_date.' '.substr($data_0,13,20) ; }
+      }else{
+        if ( $i1==4 and substr($data_0,0,4) == 'Time' ){ $test_date = $test_date.' '.substr($data_0,5,20) ; }
+      } 
+      
+
+      if ( $i1==5 and substr($data_0,0,6) == 'Lot_ID' ){ $LOT_ID = substr($data_0,7,20) ; }
+      if ( $i1==10 and substr($data_0,0,9) == 'Recipe_ID' ){ $Recipe_ID = substr($data_0,-4) ;  }
+      if ( $i1==12 and substr($data_0,0,12) == 'Process_Name' ){ $Process_Name = substr($data_0,13,20) ; } 
+      if ( $i1==13 and substr($data_0,0,4) == 'PPID' ){ $PPID = substr($data_0,5,20) ; }  
+      if ( $i1==15 and substr($data_0,0,11) == 'Recipe_Name' ){ $Recipe_Name = $data[1] ; }  
+      if ( $i1==17 and substr($data_0,0,7) == 'Slot_No' ){ $Slot_No =substr($data_0,8,20) ; }     
+      if ( $i1==18 and substr($data_0,0,8) == 'Glass_ID' ){ 
+        $sheet_id = substr($data_0,-13) ; 
+        $abbr = substr($sheet_id,0,2) ;
+      }
+      if ( $i1==20 and substr($data_0,0,11) == 'Data_Number' ){ 
+        $Data_Number = substr($data_0,12,20) ; 
+        //echo '<br>$Data_Number='.$Data_Number ;
+      }
+
+      if($i1>23){
+        if ( $data_0 =='' ) { goto UIO ;}
+        
+        for ( $j =0; $j < 20 ;$j++){
+            ###量測位置並未在lens正確座標上
+            if ( substr($abbr,0,1) == 'F' and  ($data[$j] == 959.124 or $data[$j] == 959.378 or $data[$j] ==959.185) ){
+              $test_data[$i][$j] = 958.633 ;
+            }else{
+              $test_data[$i][$j] = $data[$j] ; 
+            }
+        } 
+        $i++;
+
+      UIO:
+        //echo '-'.$i1.'-'.$data[0] ;
+        if ($i1 > 2050){
+          break;
+        }
+
+      } 
+    }
+    $test_date = $me_date ; ##統一用$ms_date
+  EDS:
+    if ( strlen($Slot_No) == 1){
+      $Slot_ID  = $LOT_ID .'_0'.$Slot_No ;
+    }else{
+      $Slot_ID  = $LOT_ID .'_'.$Slot_No ;
+    }
+    
+    if ( $Data_Number == 0 ){
+      $Data_Number = count($test_data) ;
+    }
+    //echo '<br>$Data_Number='.$Data_Number.'-'.$file ;
+    reset($openfile) ;
+    fclose($openfile);
+
+    echo '<BR>
+*******abbr='.$abbr.';  Recipe_ID :'.$Recipe_ID.';  sheet_id :'.$sheet_id.'<BR>';
+    //echo '<BR>test data:'.count($test_data).'<BR>';
+//exit ;
+    $serverName = "10.30.163.208";
+    $connectionOptions = array(
+      "UID" => "sa",
+      "PWD" => "Auol6bi1",
+      "CharacterSet" => "UTF-8"
+    );
+    $mssql_conn = sqlsrv_connect($serverName, $connectionOptions);
+
+    if (!$mssql_conn) {
+      die("資料庫連線失敗: " . print_r(sqlsrv_errors(), true));
+    }
+    $KK = date("Y-m-d H:i",strtotime("now-0 minute",time())) ; 
+
+    $KK = date("Y/m/01",strtotime("+0 minute",strtotime($KK))) ;
+
+    $sql = "Select [ABBR],[Layer],[Recipe],[X_S],[X_E],[Y_S],[Y_E],[Location],[Scan],[Lens]
+                ,[EQ],[Spec1.3],[Spec3.6],[Target]  
+            FROM [ArrayPH].[dbo].[Lens_layout]
+            Where substring(ABBR,1,1)= '".substr($abbr,0,1)."' 
+          ";
+
+    $result = sqlsrv_query($mssql_conn, $sql);
+    //echo '<BR>'.$sql.'<BR>';
+    $i =0 ;
+    $Lens_Data=array();
+    while ($row = sqlsrv_fetch_array($result, SQLSRV_FETCH_ASSOC)) {
+      $Lens_Data[$i] = array() ;
+      $Lens_Data[$i][0] = trim($row['ABBR']) ;
+      $Lens_Data[$i][1] = trim($row['Layer']) ;
+      $Lens_Data[$i][2] = trim($row['Recipe']) ;
+      $Lens_Data[$i][3] = trim($row['X_S']) ;
+      $Lens_Data[$i][4] = trim($row['X_E']) ;
+      $Lens_Data[$i][5] = trim($row['Y_S']) ;
+      $Lens_Data[$i][6] = trim($row['Y_E']) ;
+      $Lens_Data[$i][7] = trim($row['Location']) ;
+      $Lens_Data[$i][8] = trim($row['Scan']) ;
+      $Lens_Data[$i][9] = trim($row['Lens']) ;
+      $Lens_Data[$i][10] = trim($row['EQ']) ;
+      $Lens_Data[$i][11] = trim($row['Spec1.3']) ;
+      $Lens_Data[$i][12] = trim($row['Spec3.6']) ;
+      $Lens_Data[$i][13] = trim($row['Target']) ;
+      $i++;
+    }    
+    
+    //echo '<BR>lens data:'.count($Lens_Data).'<BR>';
+    //print_r(json_encode($Lens_Data)) ;
+
+goto QQB;
+  echo '<br>a';
+  echo '<table  style="border:3px #cccccc solid;" cellpadding="2" border=1>';
+  for ($i=0 ; $i < count($Lens_Data)+1 ; $i++){
+    echo '<tr>';
+    for ($j = 0;$j<count($Lens_Data[1]);$j++){
+      echo "<td><span style='font-size: 12px;'>".$Lens_Data[$i][$j]."</td>";
+    }
+    echo '</tr> ';
+  }echo '</table  >';
+QQB:
+
+
+    $m = count($test_data[0])+1 ;
+    for ($i=0 ; $i < count($test_data) ; $i++){
+
+      chip_judge($sheet_id,$test_data[$i][1],$test_data[$i][2],$chipid) ;
+      //echo '<br>'.$i.'-'.$sheet_id.'-'.$test_data[$i][1].'-'.$test_data[$i][2].'-'.$chipid;
+      $test_data[$i][$m] = $chipid ;
+      for ($j = 0;$j<count($Lens_Data);$j++){
+        //if ( $test_data[$i][2] > $Lens_Data[$j][5] and $test_data[$i][2] < $Lens_Data[$j][6] and $test_data[$i][1] > ($Lens_Data[$j][3]-10) and $test_data[$i][1] < ($Lens_Data[$j][4]+10) ){
+        if ( (float)$test_data[$i][2] > (float)$Lens_Data[$j][5] and (float)$test_data[$i][2] < (float)$Lens_Data[($j)][6] 
+          and (float)$test_data[$i][1] > (float)$Lens_Data[$j][3] and (float)$test_data[$i][1] < (float)$Lens_Data[($j)][4] ){
+          $test_data[$i][($m+1)] = $Lens_Data[($j)][7] ;
+          $test_data[$i][($m+2)] = $Lens_Data[($j)][8] ;
+          $test_data[$i][($m+3)] = $Lens_Data[($j)][9] ;
+          $test_data[$i][($m+4)] = round($Lens_Data[($j)][13],6) ;
+
+          ##特殊狀況---Center CD會連續量3點
+          if ( $Recipe_ID == '0257' or $Recipe_ID == '0258' or $Recipe_ID == '2904' or $Recipe_ID == '3105' or $Recipe_ID == '3605' 
+              or $Recipe_ID == '8101' or $Recipe_ID == '8103' or $Recipe_ID == '8105' or $Recipe_ID == '8135' or $Recipe_ID == '8138' ){
+            if ( abs((float)$test_data[$i][2] - (float)$test_data[($i-1)][2])< 3.15 and abs((float)$test_data[($i-1)][2] - (float)$test_data[($i-2)][2]) < 3.15 
+              and abs((float)$test_data[$i][1] - (float)$test_data[($i-1)][1])< 3 and abs((float)$test_data[($i-1)][1] - (float)$test_data[($i-2)][1]) < 3 ){
+              $test_data[$i][($m+5)] = 'CenterCD' ;
+              $test_data[($i-1)][($m+5)] = 'CenterCD' ;
+              $test_data[($i-2)][($m+5)] = 'CenterCD' ;
+              //echo '<br>aa='.$i ;
+            }elseif( (round($test_data[$i][1],1)==459.1 and round($test_data[$i][2],1)==747.5) or (round($test_data[$i][1],1)==459.5 and round($test_data[$i][2],1)==750.6) 
+                      or (round($test_data[$i][1],1)==459.1 and round($test_data[$i][2],1)==753.7) or (round($test_data[$i][1],1)==459.1 and round($test_data[$i][2],1)==747.6)
+                      or (round($test_data[$i][1],1)==459.5 and round($test_data[$i][2],1)==750.8) or (round($test_data[$i][1],1)==459.1 and round($test_data[$i][2],1)==753.5)
+                      or (round($test_data[$i][1],1)==1387.8 and round($test_data[$i][2],1)==748.6) or (round($test_data[$i][1],1)==1386.8 and round($test_data[$i][2],1)==749.2)
+                      or (round($test_data[$i][1],1)==1387.1 and round($test_data[$i][2],1)==752.3)  ){
+              $test_data[$i][($m+5)] = 'CenterCD' ;
+              $test_data[$i][($m+5)] = 'CenterCD' ;
+              $test_data[$i][($m+5)] = 'CenterCD' ;
+            }
+          }
+
+          //echo '<br>aaa'.$i.'-'.$sheet_id.'-'.$test_data[$i][1].'-'.$test_data[$i][1].'-'.$chipid.'-'.$test_data[$i][$m].'-'.$m;
+          goto WEQ ;
+        }
+        //echo '<br>'.$i.'-'.$sheet_id.'-'.$test_data[$i][2].'-'.$Lens_Data[$j][5].'-'.$Lens_Data[$j][6] ;
+      }
+    WEQ:
+      //if ($i >500){ exit;}
+    }    
+
+      //if ( $i1==2 and substr($data[0],0,7) == 'Machine' ){ $EQ_ID = substr($data[0],13,20) ; }
+      //  if ( is_integer(substr($EQ_ID,-1)) == 0 ){ $EQ_ID = 'AR-0'.$EQ ;}
+      //if ( $i1==3 and substr($data[0],0,4) == 'Date' ){ $test_date = substr($data[0],7,20) ; }
+      //if ( $i1==4 and substr($data[0],0,4) == 'Time' ){ $test_date = $test_date.' '.substr($data[0],7,20) ; }
+      //if ( $i1==5 and substr($data[0],0,6) == 'Lot_ID' ){ $LOT_ID = substr($data[0],9,20) ; }
+      //if ( $i1==10 and substr($data[0],0,9) == 'Recipe_ID' ){
+      //  $abbr = substr($data[0],12,2) ;
+      //  $Recipe_ID = substr($data[0],-4) ;
+      //}
+      //if ( $i1==12 and substr($data[0],0,12) == 'Process_Name' ){ $Process_Name = substr($data[0],15,20) ; } 
+      //if ( $i1==13 and substr($data[0],0,4) == 'PPID' ){ $PPID = substr($data[0],7,20) ; }  
+      //if ( $i1==15 and substr($data[0],0,11) == 'Recipe_Name' ){ $Recipe_Name = $data[1] ; }  
+      //if ( $i1==17 and substr($data[0],0,7) == 'Slot_No' ){ $Slot_No =substr($data[0],9,20) ; }     
+      //if ( $i1==18 and substr($data[0],0,8) == 'Glass_ID' ){ $sheet_id = substr($data[0],-13) ; }
+      //if ( $i1==20 and substr($data[0],0,11) == 'Data_Number' ){ $Data_Number = substr($data[0],13,20) ; }
+
+goto QQA;
+  echo '<br>';
+  echo '<table  style="border:3px #cccccc solid;" cellpadding="2" border=1>';
+  for ($i=0 ; $i < count($test_data) ; $i++){
+    echo '<tr>';
+    echo "<td><span style='font-size: 12px;'>".$EQ_ID."</td>";
+    echo "<td><span style='font-size: 12px;'>".$test_date."</td>";
+    echo "<td><span style='font-size: 12px;'>".$LOT_ID."</td>";
+    echo "<td><span style='font-size: 12px;'>".$abbr."</td>";
+    echo "<td><span style='font-size: 12px;'>".$Recipe_ID."</td>";
+    echo "<td><span style='font-size: 12px;'>".$Process_Name."</td>";
+    echo "<td><span style='font-size: 12px;'>".$PPID."</td>";
+    echo "<td><span style='font-size: 12px;'>".$Recipe_Name."</td>";
+    echo "<td><span style='font-size: 12px;'>".$Slot_No."</td>";
+    echo "<td><span style='font-size: 12px;'>".$sheet_id."</td>";
+    echo "<td><span style='font-size: 12px;'>".$Data_Number."</td>";
+
+    for ($j = 0;$j<count($test_data[1])+5;$j++){
+      echo "<td><span style='font-size: 12px;'>".$test_data[$i][$j]."</td>";
+    }
+    echo '</tr> ';
+  }echo '</table  >';
+QQA:
+
+        
+
+  $sql = "select Glass_ID 
+              From ArrayPH.dbo.AR_Measure
+                    Where Glass_ID = '".$sheet_id."' and Test_Time = '".date("Y/m/d H:i:s",strtotime($test_date))."'  
+                    ";
+
+  echo '<BR>'.$sql.'<BR>';  
+  $cnt = 0 ;              
+  $result = sqlsrv_query($mssql_conn, $sql);   //select Table_1資料表
+  while( $row = sqlsrv_fetch_array($result, SQLSRV_FETCH_ASSOC) )
+  {    
+    $cnt++;
+  }
+  if ($cnt > 0) {
+    $sql = "Delete From ArrayPH.dbo.AR_Measure 
+            Where Glass_ID = '".$sheet_id."' and  Test_Time = '".$test_date."'          ";
+    $result = sqlsrv_query($mssql_conn, $sql);  
+    //echo '<BR>'.$sql.'<BR>'; 
+  }
+
+//exit ;
+  for ( $i =0; $i < count($test_data) ; $i++ ) {
+    $sql = "Insert into ArrayPH.dbo.AR_Measure 
+            (Machine_ID ,Test_Time,Lot_ID,Recipe_ID,Process_Name
+              ,PPID,Recipe_Name,Slot_No,Glass_ID,Data_Number,Slot_ID
+              ,Point_No,X_R,Y_R,PointJudge,SubRecipeNo
+              ,L1,L2,L3,L4,L5
+              ,A1,A2,G1,G2
+              ,Point_Chip,Line_Name,Scan,Lens,SPEC,special_type
+            ) 
+            Values 
+            ('".$EQ_ID."','".date("Y/m/d H:i:s",strtotime($test_date))."','".$LOT_ID."','".$Recipe_ID."','".$Process_Name."' 
+              ,'".$PPID."','".$Recipe_Name."','".$Slot_No."','".$sheet_id."','".$Data_Number."','".$Slot_ID."'
+            ";
+    for( $j = 0;$j<14;$j++){
+        if ( $test_data[$i][$j] == null ){
+          $sql .= ",null ";
+        }else{
+          $sql .= ",'".$test_data[$i][$j]."' ";
+        }
+    }
+    for( $j = $m;$j<($m+6);$j++){
+        $sql .= ",'".$test_data[$i][$j]."' ";
+    }    
+    $sql .=" ) ";
+
+    //echo '<BR>'.$sql ;         
+    $result = sqlsrv_query($mssql_conn, $sql);  
+    //exit ;
+  }
+
+}
+
+function chip_judge($sheet_id,$xx,$yy,&$chipid)
+{
+
+  $serverName = "10.30.163.208"; //serverName\instanceName
+  $connectionInfo = array( "Database"=>"ARYTEST", "UID"=>"sa", "PWD"=>"Auol6bi1" );
+  $mssql_conn = sqlsrv_connect($serverName, $connectionInfo);
+
+  $sql = "SELECT PANEL_ID,P1,P2,P3,P4,LINE_X,LINE_Y,PITCH_X,PITCH_Y,LUA,GATE_LINE,O1,  O2,  O3,  O4
+          FROM [ARYTEST].[dbo].[Prod_layout]
+          where KISYU = substring('".$sheet_id."',1,3)  
+         " ;
+
+  //echo '<br>'.$sheet_id.'-'.$xx.'-'.$yy;
+  $result = sqlsrv_query($mssql_conn, $sql);  
+
+  $location =array() ; 
+  $i= 0 ;
+  $p=0 ;
+  while( $row = sqlsrv_fetch_array($result, SQLSRV_FETCH_ASSOC) )
+  {
+    $location[$p][0] = $row['PANEL_ID'] ; 
+    $location[$p][1] = $row['O1'] ; 
+    $location[$p][2] = $row['O2'] ; 
+    $location[$p][3] = $row['O3'] ; 
+    $location[$p][4] = $row['O4'] ; 
+    $location[$p][5] = $row['P1'] ; 
+    $location[$p][6] = $row['P2'] ; 
+    $location[$p][7] = $row['P3'] ; 
+    $location[$p][8] = $row['P4'] ; 
+    $p++ ;
+  }
+  sqlsrv_close($mssql_conn);
+
+  for ($p =0;$p<count($location);$p++){
+    $XS = $location[$p][1] ;  
+    $XE = $location[$p][3] ;
+    $YS = $location[$p][2] ;
+    $YE = $location[$p][4] ;
+    //echo '<br>'.$location[$p][0].'-'.$c->X_POINT_MM.'-'.$c->Y_POINT_MM ;
+    #判斷Panel no
+    if ($xx >= $XS and $xx <= $XE and $yy >= $YS and $yy <= $YE){
+      #判斷面內/面外
+      $chipid = $location[$p][0] ; 
+      //echo $PANEL_ID;
+      if ($xx >= $location[$p][5]+10  and $xx <= $location[$p][7]-10 and $yy >= $location[$p][6]+10 and $yy <= $location[$p][8]-10 ){
+        $location_temp = 'AA' ;
+      }elseif ($xx >= $location[$p][5]  and $xx <= $location[$p][7] and $yy >= $location[$p][6] and $yy <= $location[$p][8]){
+        $location_temp = 'IEDGE' ;
+      }else{
+        $location_temp = 'GOA' ;
+      }
+      goto ASA ;
+      //echo '<br>'.$location[$p][0].'-'.$XS.'-'.$XE.'-'.$YS.'-'.$YE ;
+    }   
+  }
+  $location[$p][0] == '00' ;
+  //echo '<br>'.$location[$p][0].'-'.$c->X_POINT_MM.'-'.$c->Y_POINT_MM ;  
+ASA:
+}
+
+
+
+
+?>
+
+
+</body>
+</html>
