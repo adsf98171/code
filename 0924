@@ -1,0 +1,742 @@
+import os
+import csv
+import time
+import json
+import pytz
+import pyodbc
+import sqlite3
+import requests
+from zeep import Client
+from bs4 import BeautifulSoup
+import xml.etree.ElementTree as ET
+from datetime import datetime, timedelta, timezone
+from flask import Flask, render_template, request, redirect, url_for
+
+# 假設起始時間是 '2024-09-18 05:00:00'，並使用 UTC 時區
+#AA_str = '2024-09-18 05:00:00'
+AA_str = '2024-09-24 12:34:29'
+tz = timezone.utc
+wsdl_url = 'http://10.30.10.17:3000/RPTWebServices/L6BServices.asmx?wsdl'
+
+# # 調用函數
+# response = fetch_data_via_wsdl(AA_str, tz, wsdl_url)
+# print(response)
+
+
+app = Flask(__name__)
+
+def chip_judge(sheet_id, xx, yy): 
+    #由sheet_id找出Prod_layout的資訊，再依照x和y座標判斷產品類別(IEDGE/GOA)，找到符合條件的面板，則返回該面板的 chipid 以及該芯片的類別（location_temp）。若未找到，則返回預設值 '00' 和 None。
+    server_name = "10.30.163.208"
+    connection_string = f"DRIVER={{SQL Server}};SERVER={server_name};UID=sa;PWD=Auol6bi1;DATABASE=ARYTEST"
+    
+    with pyodbc.connect(connection_string) as conn:
+        cursor = conn.cursor()
+        
+        sql = f"""
+        SELECT PANEL_ID, P1, P2, P3, P4, LINE_X, LINE_Y, PITCH_X, PITCH_Y, O1, O2, O3, O4
+        FROM [Prod_layout]
+        WHERE KISYU = SUBSTRING('{sheet_id}', 1, 3)
+        """
+        
+        cursor.execute(sql)
+        location = cursor.fetchall()
+
+    for row in location:
+        panel_id = row.PANEL_ID
+        XS = row.O1
+        XE = row.O3
+        YS = row.O2
+        YE = row.O4
+        P1 = row.P1
+        P2 = row.P2
+        P3 = row.P3
+        P4 = row.P4
+
+        if XS <= xx <= XE and YS <= yy <= YE:
+            chipid = panel_id
+            if P1 + 10 <= xx <= P3 - 10 and P2 + 10 <= yy <= P4 - 10:
+                location_temp = 'AA'
+            elif P1 <= xx <= P3 and P2 <= yy <= P4:
+                location_temp = 'IEDGE'
+            else:
+                location_temp = 'GOA'
+            return chipid, location_temp
+
+    return '00', None  # 若無符合條件的面板，回傳預設值
+
+# 用法示例
+# chipid, location_temp = chip_judge(sheet_id, xx, yy)
+
+
+def ar_data(file, eq, me_date):
+    #查詢數據，數據處理
+    st_dir = 'C:/AppServ/www/PH_monitor/'  # 原始資料夾路徑
+    openfile_path = os.path.join(st_dir, file)
+    
+    print(f'aa={file}{me_date[5:]}')
+    
+    test_data = []
+    i1 = 0
+    EQ_ID = None
+    test_date = ''
+    LOT_ID = ''
+    Recipe_ID = ''
+    Process_Name = ''
+    PPID = ''
+    Recipe_Name = ''
+    Slot_No = ''
+    sheet_id = ''
+    abbr = ''
+    Data_Number = 0
+
+    with open(openfile_path, 'r', encoding='utf-8') as openfile:
+        reader = csv.reader(openfile)
+        for data in reader:
+            i1 += 1
+            
+            data_0 = data[0].replace(' ', '')
+            if i1 == 2 and data_0.startswith('Machine'):
+                EQ_ID = data_0[-1]
+            if not EQ_ID[-1].isdigit():
+                EQ_ID = f'AR-0{eq}'
+            if i1 == 3 and data_0.startswith('Date'):
+                test_date = data_0[5:25]
+            if EQ_ID == '1' and i1 == 19 and data_0.startswith('Inspect_Time'):
+                test_date += ' ' + data_0[13:33]
+            elif i1 == 4 and data_0.startswith('Time'):
+                test_date += ' ' + data_0[5:25]
+            if i1 == 5 and data_0.startswith('Lot_ID'):
+                LOT_ID = data_0[7:27]
+            if i1 == 10 and data_0.startswith('Recipe_ID'):
+                Recipe_ID = data_0[-4:]
+            if i1 == 12 and data_0.startswith('Process_Name'):
+                Process_Name = data_0[13:33]
+            if i1 == 13 and data_0.startswith('PPID'):
+                PPID = data_0[5:25]
+            if i1 == 15 and data_0.startswith('Recipe_Name'):
+                Recipe_Name = data[1]
+            if i1 == 17 and data_0.startswith('Slot_No'):
+                Slot_No = data_0[8:28]
+            if i1 == 18 and data_0.startswith('Glass_ID'):
+                sheet_id = data_0[-13:]
+                abbr = sheet_id[:2]
+            if i1 == 20 and data_0.startswith('Data_Number'):
+                Data_Number = int(data_0[12:32])
+            
+            if i1 > 23:
+                if data_0 == '':
+                    continue
+                
+                measurement = [float(data[j]) if j < len(data) else None for j in range(20)]
+                if abbr.startswith('F') and any(measurement[j] in {959.124, 959.378, 959.185} for j in range(len(measurement))):
+                    test_data.append([958.633 if j < len(measurement) else None for j in range(20)])
+                else:
+                    test_data.append(measurement)
+                
+                if i1 > 2050:
+                    break
+    
+    test_date = me_date  # 統一用$ms_date
+
+    if len(Slot_No) == 1:
+        Slot_ID = f'{LOT_ID}_0{Slot_No}'
+    else:
+        Slot_ID = f'{LOT_ID}_{Slot_No}'
+
+    if Data_Number == 0:
+        Data_Number = len(test_data)
+
+    print(f'*******abbr={abbr}; Recipe_ID :{Recipe_ID}; sheet_id :{sheet_id}')
+
+    # 資料庫連線
+    server_name = "10.30.163.208"
+    connection_string = f"DRIVER={{SQL Server}};SERVER={server_name};UID=sa;PWD=Auol6bi1;CHARACTER SET=UTF-8"
+    conn = pyodbc.connect(connection_string)
+    cursor = conn.cursor()
+
+    KK = datetime.now().strftime("%Y-%m-01")
+    sql = f"""
+    SELECT [ABBR],[Layer],[Recipe],[X_S],[X_E],[Y_S],[Y_E],[Location],[Scan],[Lens],
+           [EQ],[Spec1.3],[Spec3.6],[Target]
+    FROM [ArrayPH].[dbo].[Lens_layout]
+    WHERE SUBSTRING(ABBR, 1, 1) = '{abbr[0]}'
+    """
+    
+    cursor.execute(sql)
+    lens_data = cursor.fetchall()
+    
+    Lens_Data = [[str(row[i]).strip() for i in range(len(row))] for row in lens_data]
+    
+    for i in range(len(test_data)):
+        # 呼叫 chip_judge 函數進行判斷，這裡假設已定義 chip_judge 函數
+        chipid = chip_judge(sheet_id, test_data[i][1], test_data[i][2])
+        test_data[i].append(chipid)
+
+        for lens in Lens_Data:
+            if (float(test_data[i][2]) > float(lens[5]) and float(test_data[i][2]) < float(lens[6]) and
+                float(test_data[i][1]) > float(lens[3]) - 10 and float(test_data[i][1]) < float(lens[4]) + 10):
+                test_data[i].extend([lens[7], lens[8], lens[9], round(float(lens[13]), 6)])
+                # 特殊狀況處理
+                if Recipe_ID in {'0257', '0258', '2904', '3105', '3605', '8101', '8103', '8105', '8135', '8138'}:
+                    if (i > 1 and
+                        abs(float(test_data[i][2]) - float(test_data[i-1][2])) < 3.15 and
+                        abs(float(test_data[i-1][2]) - float(test_data[i-2][2])) < 3.15 and
+                        abs(float(test_data[i][1]) - float(test_data[i-1][1])) < 3 and
+                        abs(float(test_data[i-1][1]) - float(test_data[i-2][1])) < 3):
+                        test_data[i].append('CenterCD')
+                        test_data[i-1].append('CenterCD')
+                        test_data[i-2].append('CenterCD')
+                    elif (round(test_data[i][1], 1), round(test_data[i][2], 1)) in {
+                        (459.1, 747.5), (459.5, 750.6), (459.1, 753.7),
+                        (459.1, 747.6), (459.5, 750.8), (459.1, 753.5),
+                        (1387.8, 748.6), (1386.8, 749.2), (1387.1, 752.3)}:
+                        test_data[i].append('CenterCD')
+    
+    # 關閉資料庫連線
+    cursor.close()
+    conn.close()
+    
+    return test_data
+
+
+
+########################################################################################################################
+########################################################################################################################
+
+def fetch_data_from_db(AA_str, tz):
+    """
+    通過直接查詢數據庫獲取數據
+    """
+    try:
+        # 解析時間
+        AA = datetime.strptime(AA_str, "%Y-%m-%d %H:%M:%S") - timedelta(hours=2)
+        AA = AA.replace(tzinfo=tz)
+
+        # 設置查詢時間範圍
+        st = AA.strftime('%Y-%m-%d %H:%M:%S')
+        et = (AA + timedelta(hours=1)).strftime('%Y-%m-%d %H:%M:%S')
+
+        # 連接到 MSSQL Server
+        server = '10.30.163.208'  # 請替換為您的 MSSQL 伺服器地址
+        username = 'sa'  # MSSQL 用戶名
+        password = 'Auol6bi1'  # MSSQL 密碼
+        database = 'ArrayPH'  # 資料庫名稱
+
+        connection_string = f'DRIVER={{SQL Server}};SERVER={server};UID={username};PWD={password};DATABASE={database}'
+        conn = pyodbc.connect(connection_string)
+        cursor = conn.cursor()
+
+        # 構建 SQL 查詢
+        sql = f"""
+               SELECT lot_key_no AS LOT_ID, 
+                      lot_no || kiban_no AS SHEET_ID,
+                      DEV_KIND,
+                      OP_NO,
+                      DEV_NO,
+                      a.DEV_RECIPE,
+                      SLOT_NO,
+                      c.CHAMBER_ID AS CHAMBER,
+                      TO_CHAR(se_date, 'yyyy/mm/dd hh24:mi:ss') AS SE_DATE,
+                      TO_CHAR(ms_date, 'yyyy/mm/dd hh24:mi:ss') AS MS_DATE,
+                      TO_CHAR(ME_date, 'yyyy/mm/dd hh24:mi:ss') AS ME_DATE,
+                      TO_CHAR(upd_date, 'yyyy/mm/dd hh24:mi:ss') AS UPD_DATE
+               FROM ArrayPH.dbo.AR_Titan a
+               JOIN titan.REV_SUBKIBAN c ON a.KIBAN_SEQ = c.KIBAN_SEQ
+               WHERE dev_kind IN (8)
+               AND upd_date BETWEEN TO_DATE('{st.strftime('%Y-%m-%d %H:%M:%S')}', 'YYYY-MM-DD HH24:MI:SS') 
+               AND TO_DATE('{et.strftime('%Y-%m-%d %H:%M:%S')}', 'YYYY-MM-DD HH24:MI:SS')
+               ORDER BY DEV_NO, c.CHAMBER_ID, lot_key_no, dev_kind, se_date, me_date
+               """
+        
+#         sql = f"""
+#                SELECT 
+#                    lot_key_no AS LOT_ID, 
+#                    CONCAT(lot_no, kiban_no) AS SHEET_ID,
+#                    DEV_KIND,
+#                    OP_NO,
+#                    DEV_NO,
+#                    a.DEV_RECIPE,
+#                    SLOT_NO,
+#                    c.CHAMBER_ID AS CHAMBER,
+#                    FORMAT(se_date, 'yyyy/MM/dd HH:mm:ss') AS SE_DATE,
+#                    FORMAT(ms_date, 'yyyy/MM/dd HH:mm:ss') AS MS_DATE,
+#                    FORMAT(ME_date, 'yyyy/MM/dd HH:mm:ss') AS ME_DATE,
+#                    FORMAT(upd_date, 'yyyy/MM/dd HH:mm:ss') AS UPD_DATE
+#                FROM 
+#                    titan.kiban_table a
+#                JOIN 
+#                    titan.REV_SUBKIBAN c ON a.KIBAN_SEQ = c.KIBAN_SEQ
+#                WHERE 
+#                    dev_kind IN (8)
+#                    AND upd_date BETWEEN '{st}' AND '{et}'
+#                ORDER BY 
+#                    DEV_NO, c.CHAMBER_ID, lot_key_no, dev_kind, se_date, me_date
+#                """
+        
+        # 執行查詢
+        cursor.execute(sql)
+        rows = cursor.fetchall()
+
+        # 輸出結果
+        for row in rows:
+            print(row)
+
+        # 關閉連接
+        cursor.close()
+        conn.close()
+
+    except Exception as e:
+        print(f"獲取數據時出現錯誤: {e}")
+
+# 範例用法
+AA_str = "2024-09-24 12:00:00"  # 假設的時間字符串
+tz = pytz.timezone('Asia/Taipei')  # 時區
+fetch_data_from_db(AA_str, tz)
+
+########################################################################################################################
+########################################################################################################################
+
+# def fetch_data_via_wsdl(AA_str, tz, wsdl_url):
+#     """
+#     藉由WSDL調用指定的SQL查詢，並且根據給定的時間與時區進行查詢
+#     """
+#     try:
+#         AA = datetime.strptime(AA_str, "%Y-%m-%d %H:%M:%S") - timedelta(hours=2)
+#         AA = AA.replace(tzinfo=tz)
+
+#         # 設置循環的起始條件
+#         jk = 0
+#         while True:
+#             st = AA  # 起始時間
+#             et = st + timedelta(hours=1)
+
+#             now_minus_5min = datetime.now(tz) - timedelta(minutes=5)
+
+#             if et > now_minus_5min:
+#                 print(f"\nEND::st-{st}; et-{et} - now = {now_minus_5min.strftime('%Y-%m-%d %H:%M:%S')}")
+#                 break
+
+#             jk += 1
+#             if jk > 1:
+#                 print(f"\nEND::st-{st}; et-{et}")
+#                 break
+
+#         # SQL查詢
+#         sql = f"""
+#                SELECT lot_key_no AS LOT_ID, 
+#                       lot_no || kiban_no AS SHEET_ID,
+#                       DEV_KIND,
+#                       OP_NO,
+#                       DEV_NO,
+#                       a.DEV_RECIPE,
+#                       SLOT_NO,
+#                       c.CHAMBER_ID AS CHAMBER,
+#                       TO_CHAR(se_date, 'yyyy/mm/dd hh24:mi:ss') AS SE_DATE,
+#                       TO_CHAR(ms_date, 'yyyy/mm/dd hh24:mi:ss') AS MS_DATE,
+#                       TO_CHAR(ME_date, 'yyyy/mm/dd hh24:mi:ss') AS ME_DATE,
+#                       TO_CHAR(upd_date, 'yyyy/mm/dd hh24:mi:ss') AS UPD_DATE
+#                FROM titan.kiban_table a
+#                JOIN titan.REV_SUBKIBAN c ON a.KIBAN_SEQ = c.KIBAN_SEQ
+#                WHERE dev_kind IN (8)
+#                AND upd_date BETWEEN TO_DATE('{st.strftime('%Y-%m-%d %H:%M:%S')}', 'YYYY-MM-DD HH24:MI:SS') 
+#                AND TO_DATE('{et.strftime('%Y-%m-%d %H:%M:%S')}', 'YYYY-MM-DD HH24:MI:SS')
+#                ORDER BY DEV_NO, c.CHAMBER_ID, lot_key_no, dev_kind, se_date, me_date
+#                """
+        
+#         # 進一步處理和返回
+#     except Exception as e:
+#         print(f"Error fetching data: {e}")
+#         return response_data
+
+def fetch_data_from_db(AA_str, tz, db_path):
+    """
+    通過直接查詢數據庫獲取數據
+    """
+    try:
+        # 解析時間
+        AA = datetime.strptime(AA_str, "%Y-%m-%d %H:%M:%S") - timedelta(hours=2)
+        AA = AA.replace(tzinfo=tz)
+
+        # 設置查詢時間範圍
+        st = AA.strftime('%Y-%m-%d %H:%M:%S')
+        et = (AA + timedelta(hours=1)).strftime('%Y-%m-%d %H:%M:%S')
+
+        # 連接到數據庫
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+
+        # 構建 SQL 查詢
+        sql = f"""
+               SELECT lot_key_no AS LOT_ID, 
+                      lot_no || kiban_no AS SHEET_ID,
+                      DEV_KIND,
+                      OP_NO,
+                      DEV_NO,
+                      a.DEV_RECIPE,
+                      SLOT_NO,
+                      c.CHAMBER_ID AS CHAMBER,
+                      TO_CHAR(se_date, 'yyyy/mm/dd hh24:mi:ss') AS SE_DATE,
+                      TO_CHAR(ms_date, 'yyyy/mm/dd hh24:mi:ss') AS MS_DATE,
+                      TO_CHAR(ME_date, 'yyyy/mm/dd hh24:mi:ss') AS ME_DATE,
+                      TO_CHAR(upd_date, 'yyyy/mm/dd hh24:mi:ss') AS UPD_DATE
+               FROM titan.kiban_table a
+               JOIN titan.REV_SUBKIBAN c ON a.KIBAN_SEQ = c.KIBAN_SEQ
+               WHERE dev_kind IN (8)
+               AND upd_date BETWEEN TO_DATE('{st.strftime('%Y-%m-%d %H:%M:%S')}', 'YYYY-MM-DD HH24:MI:SS') 
+               AND TO_DATE('{et.strftime('%Y-%m-%d %H:%M:%S')}', 'YYYY-MM-DD HH24:MI:SS')
+               ORDER BY DEV_NO, c.CHAMBER_ID, lot_key_no, dev_kind, se_date, me_date
+               """
+        
+        # 執行查詢
+        cursor.execute(sql)
+        rows = cursor.fetchall()
+
+        # 輸出結果
+        for row in rows:
+            print(row)
+
+        # 關閉連接
+        cursor.close()
+        conn.close()
+
+    except Exception as e:
+        print(f"獲取數據時出現錯誤: {e}")
+
+# 範例用法
+fetch_data_from_db(AA_str, tz, wsdl_url)
+
+
+# def process_response_data(response, wsdl_url):#執行
+#     """
+#     處理 WSDL 查詢返回的數據，進行解析並進行後續資料庫查詢，最後返回HTML表格
+#     :param response: WSDL查詢返回的回應結果
+#     :param wsdl_url: WSDL服務的URL
+#     :return: HTML表格結果
+#     """
+#     AR_Hist = []
+#     record_count = 0
+
+#     # 解析 XML
+#     try:
+#         root = ET.fromstring(response)
+
+#         for c in root.findall('.//Table'):
+#             record = [
+#                 c.find('LOT_ID').text if c.find('LOT_ID') is not None else None,
+#                 c.find('SHEET_ID').text if c.find('SHEET_ID') is not None else None,
+#                 c.find('DEV_KIND').text if c.find('DEV_KIND') is not None else None,
+#                 c.find('OP_NO').text if c.find('OP_NO') is not None else None,
+#                 c.find('DEV_NO').text if c.find('DEV_NO') is not None else None,
+#                 c.find('CHAMBER').text if c.find('CHAMBER') is not None and c.find('CHAMBER').text != '-' else None,
+#                 c.find('DEV_RECIPE').text if c.find('DEV_RECIPE') is not None else None,
+#                 c.find('SLOT_NO').text if c.find('SLOT_NO') is not None else None,
+#                 c.find('SE_DATE').text if c.find('SE_DATE') is not None else None,
+#                 c.find('MS_DATE').text if c.find('MS_DATE') is not None else None,
+#                 c.find('ME_DATE').text if c.find('ME_DATE') is not None else None,
+#                 c.find('UPD_DATE').text if c.find('UPD_DATE') is not None else None,
+#             ]
+#             AR_Hist.append(record)
+#             record_count += 1
+
+#         print(f'Record count: {record_count}')
+
+#     except Exception as e:
+#         print(f'解析 XML 時出現錯誤: {e}')
+#         return
+
+#     # 獲取 H_SHEET_TRANS_ODS 資料以確認前程黃光時間
+#     for i in range(len(AR_Hist)):
+#         sql = f"""
+#             SELECT OP_SEQ, EQP_ID, FORMAT(TRANS_TIMESTAMP, 'yyyy/MM/dd HH:mm') AS TRANS_TIME
+#             FROM /*+ index(H_SHEET_TRANS_ODS_ID04)*/ ARYODS.H_SHEET_TRANS_ODS 
+#             WHERE SHEET_ID_CHIP_ID = '{AR_Hist[i][1]}'
+#             AND TRANS_TIMESTAMP BETWEEN CONVERT(datetime, '{(datetime.strptime(AR_Hist[i][9], "%Y/%m/%d %H:%M:%S") - timedelta(hours=24)).strftime("%Y-%m-%d %H:%M:%S")}', 120) 
+#             AND CONVERT(datetime, '{(datetime.strptime(AR_Hist[i][9], "%Y/%m/%d %H:%M:%S") + timedelta(hours=1)).strftime("%Y-%m-%d %H:%M:%S")}', 120) 
+#             AND SUBSTRING(EQP_ID, 1, 2) = 'CA' 
+#             AND TRANS_ID = 'LOGF'
+#             ORDER BY FORMAT(TRANS_TIMESTAMP, 'yyyy/MM/dd HH:mm')
+#         """
+
+#         print(f'\n {sql}\n')
+
+#         # 調用 Web Service
+#         response = requests.post(wsdl_url, data={'sql': sql})
+#         if response.status_code == 200:
+#             obj = ET.fromstring(response.content)
+#         else:
+#             print("Web service 請求失敗")
+#             return
+
+#         for o in obj.findall('.//Table'):
+#             AR_Hist[i].extend([
+#                 o.find('TRANS_TIME').text if o.find('TRANS_TIME') is not None else None,
+#                 o.find('OP_SEQ').text if o.find('OP_SEQ') is not None else None,
+#                 o.find('EQP_ID').text if o.find('EQP_ID') is not None else None
+#             ])
+
+#     # 輸出 HTML 結果
+#     html_output = '<table style="border:3px #cccccc solid;" cellpadding="2" border=1>'
+#     for i in range(len(AR_Hist)):
+#         html_output += '<tr>'
+#         for j in range(len(AR_Hist[0])):
+#             html_output += f"<td><span style='font-size: 12px;'>{AR_Hist[i][j]}</span></td>"
+#         html_output += '</tr>'
+#     html_output += '</table>'
+    
+#     return html_output
+
+########################################################################################################################
+########################################################################################################################
+
+def process_AR_csv_and_mssql(AR_Hist, DDD, connection_string):
+    """
+    重新連接 MSSQL 資料庫，並處理 AR 機台端的 CSV 檔案
+    :param AR_Hist: AR 歷史記錄
+    :param DDD: 開始時間
+    :param connection_string: MSSQL 連接字串
+    
+    """
+    #計算總時間
+    elapsed_time = (datetime.now()-datetime.strftime(DDD,"$Y-%m-%d %H:%M:%S")).total.seconds()
+    print(f"<br>*all: {elapsed_time} sec")
+    
+    #重新連結資料庫
+    conn = pyodbc.connect(connection_string)
+    
+    
+    proxies = {
+        'http': 'http://10.31.10.188:8080',
+        'https': 'http://10.31.10.188:8080'
+    }
+    # 處理每一筆 AR 機台記錄
+    for i in range(len(AR_Hist)):
+        sql = f"""
+            SELECT Glass_ID, measure_cnt
+            FROM ArrayPH.dbo.AR_Titan
+            WHERE Glass_ID = '{AR_Hist[i][1]}' 
+            AND ME_DATE = '{AR_Hist[i][10]}'
+        """
+        
+        print(f'\n {sql}\n')
+        cnt = 0
+        cursor = conn.cursor()
+        result = cursor.execute(sql)
+        row = result.fetchone()
+
+        # 檢查資料庫中是否已有測量記錄
+        if row:
+            cnt = row.measure_cnt
+
+        if cnt > 0:
+            print('By Pass!!')
+            continue
+
+        # 抓取 CSV 檔案
+        se_date = AR_Hist[i][9].replace('/', '').replace(' ', '').replace(':', '')
+        slotid = f"{AR_Hist[i][0]}P{'0' + AR_Hist[i][7] if len(AR_Hist[i][7]) == 1 else AR_Hist[i][7]}"
+        print(f"\n{i} -- glass id = {AR_Hist[i][1]} -- slotid = {slotid} - {se_date}")
+
+        csv_url = f"http://example.com/csv/{slotid}.csv"  # 根據實際情況修改
+        response = requests.get(csv_url, proxies=proxies)
+
+        if response.status_code == 200:
+            with open(f"{slotid}.csv", 'wb') as f:
+                f.write(response.content)
+            print(f"成功抓取 CSV 檔案: {slotid}.csv")
+        else:
+            print(f"無法抓取 CSV 檔案: {csv_url}")
+
+    # 關閉資料庫連接
+    conn.close()
+    
+# # 示例使用
+# wsdl_url = 'http://example.com/wsdl'
+# AA_str = '2024-09-20 12:00:00'
+# tz = datetime.now().astimezone().tzinfo  # 當前時區
+# response = fetch_data_via_wsdl(AA_str, tz, wsdl_url)
+
+# AR_Hist = [['example_data']]  # 假設的AR_Hist數據
+# DDD = '2024-09-20 10:00:00'
+# connection_string = f"DRIVER={{SQL Server}};SERVER=10.30.163.208;UID=sa;PWD=Auol6bi1;DATABASE=ArrayPH"
+# process_AR_csv_and_mssql(AR_Hist, DDD, connection_string)
+
+########################################################################################################################
+########################################################################################################################
+
+def get_image_links(slot_id, AR_Hist, proxies):#用來找recipe_id(圖片->data)
+    
+    
+    #根據不同條件決定圖片的存放位置
+    if AR_Hist[4] == "1" and AR_Hist[5] == "A":   #AR_01有兩個，分A、B 
+        folder_img = "http://10.31.21.31/image/ar/"
+    elif AR_Hist[4] == "1" and AR_Hist[5] == "B":
+        folder_img = "http://10.31.26.7/image/AR/"
+    elif AR_Hist[4] == "4":                      #AR_04
+        folder_img ="http://10.31.21.21/image/"
+        response = requests.get(folder_img, proxies = proxies)
+        soup = BeautifulSoup(response.text, 'html.parser')
+        links = soup.find_all('a')
+        
+        for linj in links:
+            href = link.get('href')
+            filename = href.split('/')[-1]
+            if filename not in ['..','.'] and filename.lower().endswith(('jpg','bmp')):
+                link_data.append(filename)
+    
+    return folder_img, link_data
+
+#資料檢查與跳過重複的資料
+def should_skip(temp_EQ, temp_CH, temp_recipe, AR_Hist_entry):
+    """判斷是否該跳過當前資料"""
+    if temp_EQ == AR_Hist_entry[4] and temp_CH == AR_Hist_entry[5] and temp_recipe == AR_Hist_entry[6]:
+        return True
+    return False
+
+#下載圖片與資料處理
+def down_load_images(folder_img, proxies):
+    """下載圖片並傳回圖片清單"""
+    response = requests.get(folder_img, proxies = proxies)
+    link_data = []
+    
+    if response.status_code == 200:
+        soup = BeautifulSoup(response.text, 'html.parser')
+        links = soup.find_all('a')
+        
+        for link in links:
+            href = link.get('herf')
+            filename = href.split('/')[-1]
+            
+            if filename not in ["..","."] and filename.lower().endswith(('jgp','bmp')):
+                link_data.append(filename)
+    
+    return link_data
+
+########################################################################################################################
+########################################################################################################################
+
+
+#特殊的AR機台資料
+def handle_special_conditions(AR_Hist_entry):
+    """根據AR_Hist的資料處理特殊條件"""
+    chk_model = ''
+    if AR_Hist_entry[4] in [1,2]:
+        prefix = AR_Hist_entry[1][:2]
+        if prefix == 'SG':
+            chk_model = 'SH'
+        elif prefix =='SZ':
+            chk_model = 'SZ1'
+        elif prefix =='HP':
+            chk_model = 'HP1'
+        elif prefix =='LA':
+            chk_model = 'LA1'
+        else:
+            chk_model = prefix
+    elif AR_Hist_entry[4] == 4:
+        prefix3 == AR_Hist_entry[1][:3]
+        last_hour = float(AR_Hist_entry[6][-4:])
+        if (prefix3 == 'FR8' and 1800 <= last_four < 1900) or (prefix3 == 'FX2' and 5700 <= last_four < 5800):
+            chk_model = prefix3
+        else:
+            chk_model = AR_Hist_entry[1][:2]
+    else:
+        chk_model = AR_Hist_entry[1][:2]
+    
+    return chk_model
+
+
+#下載並解析 HTML 頁面
+def download_html_page(folder: str) -> BeautifulSoup:
+    """下載 HTML 頁面並使用 BeautifulSoup 解析"""
+    response = requests.get(folder)
+    html = response.text
+    soup = BeautifulSoup(html, 'html.parser')
+    return soup
+
+# 檢查並下載對應的文件
+def find_and_download_file(links, recipe, se_date, slotid, AR_Hist_item) -> str:
+    """根據條件檢查並下載對應的文件"""
+    found_file = False
+    for link in links:
+        href = link.get('href')
+        filename = os.path.basename(href)
+        
+        # 檢查文件名稱是否符合條件
+        if (AR_Hist_item[4] in [1, 2] and filename == f"{se_date}.dat") or \
+           (AR_Hist_item[4] == 4 and filename[15:28] == slotid and 
+            abs(int(datetime.strptime(filename[:15], '%Y%m%d%H%M%S').timestamp()) - 
+                int(datetime.strptime(AR_Hist_item[10], '%Y-%m-%d %H:%M:%S').timestamp())) < 180):
+            found_file = True
+            file_url = os.path.join(folder, filename)
+            break
+    
+    if not found_file:
+        return None
+    
+    # 下載並保存文件
+    local_filename = "data.csv"
+    response = requests.get(file_url)
+    with open(local_filename, 'wb') as f:
+        f.write(response.content)
+    return local_filename
+
+#處理圖片的邏輯
+def process_images(img_data, test_data, AR_Hist_item, folder_img):
+    """根據測試數據處理並下載對應圖片"""
+    for filename in img_data:
+        url1, url2 = '', ''
+        for j in range(len(test_data)):
+            url = os.path.join(folder_img, filename)
+
+            if str(AR_Hist_item[4])[-1] in ['1', '2']:
+                pointno = f"_{float(test_data[j][0]):.0f}" if len(str(float(test_data[j][0]))) > 1 else f"_0{float(test_data[j][0])}"
+
+                if pointno == filename[-9:-6]:
+                    url1 = url
+                    break
+                elif pointno == filename[-10:-6]:
+                    url1 = url
+                    break
+
+            elif str(AR_Hist_item[4])[-1] == '4':
+                for ext in ['.jpg', '.bmp']:
+                    if url.endswith(f'_{test_data[j][0]}{ext}') or url.endswith(f'_{test_data[j][0]}{ext[:-1]}'):
+                        url2 = url
+                        break
+        # 後續更新資料庫或進行圖片處理邏輯
+        return url1, url2
+    
+#更新資料庫的邏輯
+def update_database(AR_Hist_item, test_data, url1, url2):
+    """更新資料庫中相應欄位"""
+    if url1:
+        sql = f"""
+            UPDATE ArrayPH.dbo.AR_Measure 
+            SET Img1 = '{url1}' 
+            WHERE Glass_ID = '{AR_Hist_item[1]}' AND Point_No = '{float(test_data[0][0])}' AND Recipe_ID LIKE '%{float(AR_Hist_item[6][-4:])}' 
+            AND Test_Time BETWEEN '{(datetime.strptime(AR_Hist_item[9], "%Y-%m-%d %H:%M:%S") - timedelta(minutes=300)).strftime("%Y-%m-%d %H:%M:%S")}' 
+            AND '{(datetime.strptime(AR_Hist_item[10], "%Y-%m-%d %H:%M:%S") + timedelta(minutes=300)).strftime("%Y-%m-%d %H:%M:%S")}'
+        """
+    elif url2:
+        sql = f"""
+            UPDATE ArrayPH.dbo.AR_Measure 
+            SET Img2 = '{url2}' 
+            WHERE Glass_ID = '{AR_Hist_item[1]}' AND Point_No = '{float(test_data[0][0])}' AND Recipe_ID LIKE '%{float(AR_Hist_item[6][-4:])}' 
+            AND Test_Time BETWEEN '{(datetime.strptime(AR_Hist_item[9], "%Y-%m-%d %H:%M:%S") - timedelta(minutes=300)).strftime("%Y-%m-%d %H:%M:%S")}' 
+            AND '{(datetime.strptime(AR_Hist_item[10], "%Y-%m-%d %H:%M:%S") + timedelta(minutes=300)).strftime("%Y-%m-%d %H:%M:%S")}'
+        """
+    result = sqlsrv_query(mssql_conn, sql)  # 執行 SQL 查詢
+    return result
+
+########################################################################################################################
+########################################################################################################################
+
+wsdl_url = 'http://10.30.10.17:3000/RPTWebServices/L6BServices.asmx?wsdl'
+response = fetch_data_via_wsdl(AA_str, tz, wsdl_url)
+
+if response is not None:
+    result = process_response_data(response, wsdl_url)
+else:
+    print("未獲取到有效的響應，請檢查 fetch_data_via_wsdl 函數。")
+    
+#result = process_response_data(response,wsdl_url)
