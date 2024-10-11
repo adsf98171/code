@@ -1,0 +1,719 @@
+from flask import Flask, request, render_template, jsonify, send_file, abort
+import matplotlib.pyplot as plt
+import plotly.express as px
+import plotly.io as pio
+import pandas as pd
+import numpy as np
+import logging
+import kaleido
+import base64
+import pyodbc
+import json
+import io
+import os
+import re
+
+app = Flask(__name__)
+
+# SQL Server 連接配置
+server = '10.30.163.208'
+username = 'sa'
+password = 'Auol6bi1'
+database = 'ArrayPH'
+
+connection_string = f'DRIVER={{SQL Server}};SERVER={server};DATABASE={database};UID={username};PWD={password}'
+
+@app.route('/')
+def index():
+    return render_template('index.html', table_html='')
+
+data_draw_CD_name = None  # 定義全局變數
+
+@app.route('/details/<glass_id>', methods=['GET'])
+def details(glass_id):
+    global data_draw_CD_name  # 指定使用全域變數
+    
+    # 從 AR_Titan 中獲取 Recipe_ID
+    query_titan = f'''
+        SELECT Recipe_ID 
+        FROM dbo.AR_Titan 
+        WHERE Glass_ID = '{glass_id}'
+    '''
+    
+    try:
+        with pyodbc.connect(connection_string) as conn:
+            logging.debug(f"Connecting to database with connection string: {connection_string}")
+            df_titan = pd.read_sql(query_titan, conn)
+        
+        if df_titan.empty:
+            logging.warning(f"No Recipe_ID found for Glass ID: {glass_id} in AR_Titan.")
+            return jsonify({"error": "No Recipe_ID found in AR_Titan."}), 404
+
+        recipe_id = df_titan.iloc[0]['Recipe_ID']
+        match = re.search(r'(\d+)$', recipe_id)
+        if not match:
+            logging.warning(f"Invalid Recipe_ID format: {recipe_id} for Glass ID: {glass_id}")
+            return jsonify({"error": "Invalid Recipe_ID format."}), 404
+        
+        recipe_id_numbers = match.group(1)
+
+        query_measure = f'''
+            SELECT * 
+            FROM dbo.AR_Measure 
+            WHERE Glass_ID = '{glass_id}' AND Recipe_ID LIKE '%{recipe_id_numbers}%'
+        '''
+        
+        logging.debug(f"Executing query for AR_Measure: {query_measure}")
+
+        df_measure = pd.read_sql(query_measure, conn)
+
+        if df_measure.empty:
+            logging.warning(f"No data found in AR_Measure for Glass ID: {glass_id} and Recipe_ID: {recipe_id}")
+            return jsonify({"error": "No data found in AR_Measure for this Glass ID and Recipe_ID."}), 404
+        
+        # 只挑選每個 Point_No 的第一筆資料
+        df_measure = df_measure.groupby('Point_No').nth(0).reset_index()
+        
+
+        # 替換 L1~G2 列中的 None 和 NaN 為空字串
+        columns_to_replace = ['L1', 'L2', 'L3', 'L4', 'L5', 'A1', 'A2', 'G1', 'G2']
+        df_measure[columns_to_replace] = df_measure[columns_to_replace].replace({None: '', np.nan: ''})
+        
+        df_filtered = df_measure[~(df_measure[columns_to_replace].isnull() | df_measure[columns_to_replace].eq('')).all(axis=1)]
+        selected_columns = [
+            'Point_No', 'X_R', 'Y_R', 'PointJudge', 'SubRecipeNo', 
+            'L1', 'L2', 'L3', 'L4', 'L5', 'A1', 'A2', 
+            'G1', 'G2', 'Point_Chip', 'Line_Name', 'Scan', 
+            'Lens', 'SPEC', 'special_type', 'Img1', 'Img2'
+        ]
+        filtered_df = df_filtered[selected_columns]
+        filtered_df_sort = filtered_df.sort_values(by='Point_No', ascending=True)
+
+        # 將 Img1 和 Img2 轉換為 IMG 標籤
+        filtered_df_sort['Img1'] = filtered_df_sort['Img1'].apply(lambda x: f'<img src="{x}" width="100" height="100" />' if pd.notnull(x) and x != '' else '')
+        filtered_df_sort['Img2'] = filtered_df_sort['Img2'].apply(lambda x: f'<img src="{x}" width="100" height="100" />' if pd.notnull(x) and x != '' else '')
+
+        # 使用第一行的數據作為顯示（若有需要的話）
+        data = df_measure.iloc[0].to_dict()
+        
+        table_html = filtered_df_sort.to_html(classes='table table-striped table-bordered', index=False, escape = False)#escape = False 是在Img1和2印出圖
+########################################################################################################################
+#散布圖
+
+         # 假設 df_measure 是你的數據框
+         # 將 X_R 和 Y_R 列轉換為數字類型，如果無法轉換則設為 NaN
+        df_measure['X_R'] = pd.to_numeric(df_measure['X_R'], errors='coerce')
+        df_measure['Y_R'] = pd.to_numeric(df_measure['Y_R'], errors='coerce')
+
+        # 移除任何含有 NaN 值的行，這樣可以確保數據都是有效數字
+        df_measure = df_measure.dropna(subset=['X_R', 'Y_R'])
+
+        # 將 X_R 和 Y_R 進位至小數點第一位
+        df_measure['X_R'] = df_measure['X_R'].round(1)
+        df_measure['Y_R'] = df_measure['Y_R'].round(1)
+
+        # 使用 Plotly 繪製交互式散佈圖
+        fig_plotly = px.scatter(
+            df_measure,
+            x='X_R', 
+            y='Y_R', 
+            hover_data=['Point_No', 'X_R', 'Y_R'],  # 顯示 Point_No, X_R, Y_R
+            title="Interactive Scatter Plot for X(R) and Y(R)",
+            opacity=0.5  # 增加透明度
+        )
+
+        # 設置 Plotly 圖的軸標題和格式
+        fig_plotly.update_layout(
+            xaxis_title='X(R)',
+            yaxis_title='Y(R)',
+            title_font_size=26,
+            xaxis_title_font_size=18,
+            yaxis_title_font_size=18,
+            xaxis=dict(tickmode='linear', dtick=100),
+            yaxis=dict(tickmode='linear', dtick=100),
+            width=900,  # 設置您希望的寬度
+            height=500,  # 設置您希望的高度
+            margin=dict(l=50, r=50, t=50, b=50)  # 設定邊距
+        )
+        
+        fig_plotly.write_html('scatter_plot.html', include_plotlyjs='cdn')
+        
+########################################################################################################################     
+        #整理資料，創建新欄位Group，命名左、左中、中、右中、右
+#         print(filtered_df.columns)
+        filtered_df = filtered_df.to_numpy()
+#         print(filtered_df)
+        data_draw_name = assign_group(filtered_df)
+#         data_draw_name_half = data_draw_name[0]
+#         print(data_draw_name)
+        
+        data_draw_CD = process_data(filtered_df,data_draw_name, glass_id)
+#         print(data_draw_CD)
+
+
+
+        rows = []
+
+        # 遍歷 data_draw_CD 的每個子列表
+        for group in data_draw_CD:
+            for entry in group:
+                # 檢查 entry 是否為有效列表，並且包含至少 9 個元素
+                if isinstance(entry, list) and len(entry) == 9:
+                    Scan_M = entry[0]  # 提取 Scan_M 字符串
+                    values = entry[1:8]  # 提取對應的數值 (L1, L2, L3, L4, L5, A1, A2)
+                    group_label = entry[8]  # 提取組標籤
+
+                    # 跳過空的 Scan_M 或 None 值
+                    if Scan_M and any(val is not None for val in values):  # 確保至少有一個值不為 None
+                        # 去除 Scan_M 中的多餘空格
+                        Scan_M_clean = re.sub(r'\s+', '', Scan_M)
+                        # 添加到 rows 列表中
+                        rows.append([Scan_M_clean] + values + [group_label])  # 包含組標籤
+                else:
+                    # 只對無效條目發出一次警告
+                    if entry != ['', None]:  # 僅排除特定無效條目
+                        print(f"Warning: 'entry' is not a valid list or has insufficient elements. Entry: {entry}")
+
+        # 將結果轉換成 DataFrame
+        columns = ['Scan_M', 'L1', 'L2', 'L3', 'L4', 'L5', 'A1', 'A2', 'Group']  # 增加所有欄位
+        data_draw_CD_name = pd.DataFrame(rows, columns=columns)
+        
+        columns_to_replace = ['L1', 'L2', 'L3', 'L4', 'L5', 'A1', 'A2']
+        data_draw_CD_name[columns_to_replace] = data_draw_CD_name[columns_to_replace].replace({None: '',np.nan: ''})# 替換 L1~G2 列中的 None 和 NaN 為空字串
+
+        # 打印最終結果
+        print(data_draw_CD_name)
+        
+        
+########################################################################################################################
+
+# # CD Chart
+
+        #按鈕
+
+        draw_columns = ['L1','L2','L3','L4','L5','A1','A2']
+        selected_chart = None  # 初始化為 None
+    
+        if request.method == 'POST':
+            selected_chart = request.form.get('chartSelection')  # 獲取選中的圖表
+            print(f"Selected chart: {selected_chart}")  # 檢查選中的欄位是否正確傳遞
+                # 根據選擇的圖表生成對應的圖表
+            if selected_chart:
+                # 在這裡產生對應的圖表邏輯，例如根據 selected_chart 來選擇數據
+                # 例如使用 Plotly 或 Matplotlib 繪圖
+                plot_html = f'<p>Showing chart for {selected_chart}</p>'  # 示例圖表代碼
+                plotly_html_content = plot_html  # 這裡您可以用實際的圖表代碼取代這行
+            else:
+                plotly_html_content = '<p>No chart selected</p>'
+                
+         #CD plot
+
+#         chart_html = draw_line(data_draw_CD_name)
+        
+
+########################################################################################################################
+        # 將散布圖嵌入HTML
+#         plot_html = f'<img src="data:image/png;base64,{plot_url}" width="600" height="400" />'
+#         html_content = f'<img src="data:image/png;base64,{plotly_plot_url}" alt="Scatter Plot">'
+        with open('scatter_plot.html', 'r', encoding='utf-8') as f:
+            plotly_html_content = f.read()
+
+#         return render_template('details.html',draw_columns=draw_columns ,selected_chart=selected_chart , table_html=table_html, html_content=plotly_html_content, glass_id=glass_id, recipe_id=recipe_id, data=data)
+        return render_template('details.html',
+                               draw_columns=draw_columns,
+                               selected_chart=selected_chart,
+                               table_html=table_html,
+                               html_content=plotly_html_content,
+#                                chart_html=chart_html,
+                               glass_id=glass_id,
+                               recipe_id=recipe_id,
+                               data=data
+                               )
+
+    except Exception as e:
+        logging.error(f"Error while querying the database: {e}")
+        return jsonify({"error": str(e)}), 500  # 返回具體的錯誤信息
+
+
+@app.route('/search', methods=['GET'])
+def search():
+    # 取得查詢參數
+    start_time = request.args.get('st', '')
+    end_time = request.args.get('et', '')
+    lot_id = request.args.get('lotid', '')
+    recipe = request.args.get('Recipe', '')
+
+    # 構建初始 SQL 查詢語句，Lot_ID 不能為空
+    query = '''
+        SELECT Lot_ID, Glass_ID, OP_No, DEV_NO, PH_STEP, Recipe_ID, PH_EQ, csv_floder, Last_PH_TIME AS Data_Time
+        FROM dbo.AR_Titan
+        WHERE Lot_ID IS NOT NULL AND Lot_ID <> ''
+    '''
+
+    # 構建參數列表
+    params = []
+
+    # 檢查是否提供了起始和結束時間，若有則加入時間過濾條件
+    if start_time and end_time:
+        # 修改日期格式為 SQL Server 認可的格式
+        start_time = start_time.replace('T', ' ') + ':00'
+        end_time = end_time.replace('T', ' ') + ':00'
+        query += " AND Last_PH_TIME BETWEEN ? AND ?"
+        params.extend([start_time, end_time])
+
+    # 如果提供了 Lot_ID，則添加 LIKE 條件
+    if lot_id:
+        query += " AND Lot_ID LIKE ?"
+        params.append(lot_id + '%')
+
+    # 如果提供了 Recipe_ID，則添加 LIKE 條件
+    if recipe:
+        query += " AND Recipe_ID LIKE ?"
+        params.append(recipe + '%')
+
+    # 如果沒有提供任何條件，返回錯誤
+    if not (start_time and end_time) and not lot_id and not recipe:
+        return jsonify({"error": "Please provide at least one search criterion: time range, Lot_ID, or Recipe_ID"}), 400
+
+    try:
+        # 連接到 SQL Server 並執行查詢
+        with pyodbc.connect(connection_string) as conn:
+            # 使用參數化查詢來避免SQL注入攻擊
+            df = pd.read_sql(query, conn, params=params)
+
+        # 檢查查詢結果是否為空
+        if df.empty:
+            return jsonify({"error": "No data found for the given criteria."}), 404
+        
+        #將Data的順序由Data_Time的順序，由近到遠排序
+        df['Data_Time'] = pd.to_datetime(df['Data_Time'])
+        df = df.sort_values(by = 'Data_Time', ascending = False)
+
+        # 將 DataFrame 轉換為 HTML 表格
+        table_html = df.to_html(classes='table table-striped table-bordered', index=False)
+
+        # 返回結果頁面
+        return render_template('result.html', data=df.to_dict(orient='records'), table_html=table_html, start_date=start_time, end_date=end_time)
+
+    except Exception as e:
+        # 捕獲並返回錯誤信息
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/download_csv/<filename>') #將dat轉為csv用，但目前無效(AR01/AR02才有這問題)
+def down_csv(filename):
+    dat_file = f'{filename}.dat'
+    csv_file = f'{filename}.csv'
+    
+    try:
+        if os.path.exists(dat_file):  # 修改這裡
+            df = pd.read_csv(dat_file, sep=None, engine='python')  # 讀取.dat檔案
+            
+            df.to_csv(csv_file, index=False)  # 將數據儲存為.csv檔案
+            
+            return send_file(csv_file, as_attachment=True, download_name=f'{filename}.csv')  # 修正拼寫
+            
+        else:
+            return jsonify({'error': f'{dat_file}不存在'}), 404
+    
+    except Exception as e:
+        return f'轉換或下載時發生錯誤: {str(e)}', 500
+    
+    finally:
+        if os.path.exists(csv_file):
+            try:
+                os.remove(csv_file)
+            except Exception as e:
+                print(f'刪除檔案時發生錯誤: {str(e)}')
+                
+########################################################################################################################
+
+def assign_group(Data):
+    data_draw_name = []  # 初始化一組資料集
+    
+    # 將第一組資料的第一個 Y_R 和 Scan 加入
+    data_draw_name.append([round(float(Data[0][1]) / 10) * 10, Data[0][16]])
+
+    for i in range(len(Data) - 1):  # 使用 len(Data) - 1 避免超出範圍
+        if (
+            abs(float(Data[i][1]) - float(Data[i + 1][1])) > 10 or
+            Data[i][16] != Data[i + 1][16] or
+            Data[i + 1][19] == 'CenterCD' or
+            Data[i][19] == 'CenterCD'
+        ) and Data[i + 1][1] != '':
+            
+            # 檢查是否已經存在該群組
+            if not any(data_draw_name[s][0] == round(float(Data[i + 1][1]) / 10) * 10 for s in range(len(data_draw_name))):
+                data_draw_name.append([round(float(Data[i + 1][1]) / 10) * 10, Data[i + 1][16]])
+
+    # 排序
+    data_draw_name.sort(key=lambda x: x[1])  # 根據第一個元素排序
+
+    # 獲取唯一的 Scan 名稱
+    scan_list = list(set(item[1] for item in data_draw_name))
+
+    for scan in scan_list:
+        ii = 1
+        for item in data_draw_name:
+            if item[1] == scan:
+                item[1] = ii
+                ii += 1
+        
+        # 替換群組名稱為對應的英文標籤
+        if ii == 2:
+            for item in data_draw_name:
+                if item[1] == 1:
+                    item[1] = 'Center'
+        elif ii == 3:
+            for item in data_draw_name:
+                if item[1] == 1:
+                    item[1] = 'Left'
+                elif item[1] == 2:
+                    item[1] = 'Right'
+        elif ii == 4:
+            for item in data_draw_name:
+                if item[1] == 1:
+                    item[1] = 'Left'
+                elif item[1] == 2:
+                    item[1] = 'Center'
+                elif item[1] == 3:
+                    item[1] = 'Right'
+        elif ii == 5:
+            for item in data_draw_name:
+                if item[1] == 1:
+                    item[1] = 'Left'
+                elif item[1] == 2:
+                    item[1] = 'Left-Center'
+                elif item[1] == 3:
+                    item[1] = 'Center'
+                elif item[1] == 4:
+                    item[1] = 'Right-Center'
+                elif item[1] == 5:
+                    item[1] = 'Right'
+
+    return data_draw_name  # 返回所有處理過的資料
+
+
+def process_data(Data, data_draw_name, glass_id):
+    tt = 0
+    data_draw_CD = []
+
+    # 初始化 data_draw_CD 為空列表
+    for j in range(7):  # 假設要處理的列是 5 到 11，共 7 列
+        data_draw_CD.append([])
+
+    # 遍歷 Data 中的每一行
+    for i in range(len(Data)):
+        # 檢查 Data 的第 19 列是否不是 'CenterCD'
+        if Data[i, 19] != 'CenterCD':
+            for s in range(len(data_draw_name)):  # 使用 data_draw_name 的長度
+                if (data_draw_name[s][0] > float(Data[i, 1]) - 7.6) and \
+                   (data_draw_name[s][0] < float(Data[i, 1]) + 7.6):
+
+                    # 65" 特定條件處理 (跨 scan 比較)
+                    m = len(data_draw_CD[j])
+                    if (glass_id[0] != 'F' and (m > 0 and data_draw_CD[j][m - 1][0][:5] != Data[i, 16])) or \
+                       (glass_id[0] == 'F' and (i + 1 < len(Data) and Data[i + 1, 14] != Data[i, 14])):
+                        # 插入空格
+                        data_draw_CD[j].append(['', None, None, None, None, None, None, None, None])  # 需要有 9 個元素
+
+                    # 抓 Y 軸資料並儲存
+                    m = len(data_draw_CD[j])
+                    data_draw_CD[j].append([None] * 9)  # 初始化一個長度為 9 的列表
+
+                    # X 軸資料：組合 Data[i][16] 和 Data[i][17] 作為標籤
+                    data_draw_CD[j][m][0] = f"{Data[i, 16]}_{Data[i, 17]}->{tt}"
+
+                    # 限制 Data[i][5 + j] 到第 5~11 列 (L1~A2)
+                    for k in range(7):  # L1 (5) 到 A2 (11)
+                        if 0 <= j <= 6 and (5 + j) < Data.shape[1] and Data[i, 5 + k] != '':
+                            data_draw_CD[j][m][k + 1] = float(Data[i, 5 + k])  # k + 1 對應 L1, L2, ..., A2
+                        else:
+                            data_draw_CD[j][m][k + 1] = None  # 設定為 None
+                            
+                    data_draw_CD[j][m][-1] = data_draw_name[s][1]# 添加所屬組的名稱到最後一個位置 (第9個元素)
+
+                    # 跳出內部迴圈
+                    break
+
+            # 如果當前行的第 5 到第 11 列全為空，則忽略該列
+            if np.all(Data[i, 5:12] == ''):
+                continue
+
+        # 如果下一行資料的 Scan（Data[i][16] 或 Data[i][17]）不同，重置 tt，否則遞增
+        if i + 1 < len(Data) and (Data[i, 16] != Data[i + 1, 16] or Data[i, 17] != Data[i + 1, 17]):
+            tt = 0
+        else:
+            tt += 1
+
+    return data_draw_CD
+
+
+# @app.route('/draw_line/<string:column>', methods=['GET'])
+# def draw_line(column):
+#     global data_draw_CD_name
+    
+#     if data_draw_CD_name is None:
+#         return "Data not available!", 404
+
+#     if column not in data_draw_CD_name.columns:
+#         return "Column not found!", 404
+
+# #     print(data_draw_CD_name[column].head())  # 列印選定列的前幾行
+
+#     # 刪除含有 NaN 的列
+#     data_draw_CD_name = data_draw_CD_name.dropna(subset=['Group', 'Scan_M', column])
+
+
+#     # 根據 Group 列分組
+#     grouped = data_draw_CD_name.groupby('Group')
+
+#     # 用於生成圖表數據的列表
+#     series_data = []
+#     for group_name, group_data in grouped:
+#         series_data.append({
+#             'name': group_name,
+#             'data': group_data[column].tolist()  # 將選定列的數據轉為列表
+#         })
+        
+#     print(data_draw_CD_name['Group'].unique())  # 列印出所有唯一的 Group
+#     print(series_data)
+
+#     chart_html = f'''
+#     <figure class="highcharts-figure" style="text-align: left;">
+#         <div id="myChart" style="height: 600px; width: 900px"></div>
+#     </figure>
+#     <script type="text/javascript">
+#         Highcharts.chart("myChart", {{
+#             chart: {{
+#                 type: "line",
+#                 zoomType: "xy"
+#             }},
+#             title: {{
+#                 text: "Line Plot of {column}"
+#             }},
+#             xAxis: {{
+#                 categories: {json.dumps(data_draw_CD_name['Scan_M'].tolist())},  // 使用 Scan_M 作為 X 軸
+#                 title: {{
+#                     text: "Scan_M"
+#                 }}
+#             }},
+#             yAxis: {{
+#                 title: {{
+#                     text: "{column} Value"
+#                 }}
+#             }},
+#             series: {json.dumps(series_data)}  // 使用分組的數據
+#         }});
+#     </script>
+#     '''
+    
+#     return render_template_string(chart_html)
+
+@app.route('/draw_line/<string:column>', methods=['GET'])
+def draw_line(column):
+    global data_draw_CD_name
+    
+    print(f"Received column: {column}")
+
+    if data_draw_CD_name is None or data_draw_CD_name.empty:
+        return "Data not available!", 404
+
+    if column not in data_draw_CD_name.columns:
+        return "Column not found!", 404
+
+    # 刪除含有 NaN 的列
+    data_draw_CD_name = data_draw_CD_name.dropna(subset=['Group', 'Scan_M', column])
+    print(data_draw_CD_name.shape)  # 調試用，查看數據形狀
+
+    if data_draw_CD_name.empty:
+        return "No data available after cleaning!", 404
+
+    # 根據 Group 列分組
+    grouped = data_draw_CD_name.groupby('Group')
+
+    # 用於生成圖表數據的列表
+    series_data = []
+    for group_name, group_data in grouped:
+        series_data.append({
+            'name': group_name,  # 使用 Group 名稱作為系列名稱
+            'data': group_data[column].tolist()  # 使用該分組的 column 數據
+        })
+
+    x_data = data_draw_CD_name['Scan_M'].tolist()  # 獲取 X 軸數據
+
+    chart_html = f'''
+    <figure class="highcharts-figure" style="text-align: left;">
+        <div id="myChart" style="height: 600px; width: 900px"></div>
+    </figure>
+    <script type="text/javascript">
+        Highcharts.chart("myChart", {{
+            chart: {{
+                type: "line",
+                zoomType: "xy"
+            }},
+            title: {{
+                text: "Line Plot of {column}"
+            }},
+            xAxis: {{
+                categories: {json.dumps(x_data)},  // 使用 X 軸數據
+                title: {{
+                    text: "Scan_M"
+                }}
+            }},
+            yAxis: {{
+                title: {{
+                    text: "{column} Value"
+                }}
+            }},
+            series: {json.dumps(series_data)}  // 使用分組的數據
+        }});
+    </script>
+    '''
+
+    return chart_html  # 直接返回生成的 HTML
+
+
+
+if __name__ == '__main__':
+    app.run()
+
+
+
+
+
+########################################################################################################################
+details.html:
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <title>Details for {{ glass_id }}</title>
+    <link rel="stylesheet" href="https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/css/bootstrap.min.css">
+    <script src="https://code.highcharts.com/highcharts.js"></script>
+    <script type="text/javascript">
+        function showChart(columnIndex) {
+            var charts = document.getElementsByClassName("chart");
+            for (var i = 0; i < charts.length; i++) {
+                charts[i].style.display = "none";  // 隱藏所有圖表
+            }
+            document.getElementById(`myChart_${columnIndex}`).style.display = "block";  // 顯示選中的圖表
+
+            // 獲取圖表數據
+            fetch(`/draw_line/${draw_columns[columnIndex]}`)
+                .then(response => {
+                    if (!response.ok) {
+                        throw new Error('Network response was not ok');
+                    }
+                    return response.text();
+                })
+                .then(data => {
+                    document.getElementById(`chart_container_${columnIndex}`).innerHTML = data;  // 插入圖表
+                })
+                .catch(error => console.error('Error fetching chart data:', error));
+        }
+            </script>
+</head>
+<body>
+
+    <div class="container">
+        <h1 class="text-center">Details for Glass_ID: {{ glass_id }}</h1>
+        <hr>
+
+        <!-- 詳細信息 -->
+        <table class="table table-bordered">
+            <tr>
+                <th>Machine_ID</th>
+                <td>{{ data.get('Machine_ID', 'No Data Available') }}</td>
+            </tr>
+            <tr>
+                <th>Test_Time</th>
+                <td>{{ data.get('Test_Time', 'No Data Available') }}</td>
+            </tr>
+            <tr>
+                <th>Lot_ID</th>
+                <td>{{ data.get('Lot_ID', 'No Data Available') }}</td>
+            </tr>
+            <tr>
+                <th>Slot_No</th>
+                <td>{{ data.get('Slot_No', 'No Data Available') }}</td>
+            </tr>
+            <tr>
+                <th>Glass_ID</th>
+                <td>{{ data.get('Glass_ID', 'No Data Available') }}</td>
+            </tr>
+            <tr>
+                <th>Recipe_ID</th>
+                <td>{{ data.get('Recipe_ID', 'No Data Available') }}</td>
+            </tr>
+            <tr>
+                <th>Recipe_Name</th>
+                <td>{{ data.get('Recipe_Name', 'No Data Available') }}</td>
+            </tr>
+            <tr>
+                <th>Data_Number</th>
+                <td>{{ data.get('Data_Number', 'No Data Available') }}</td>
+            </tr>
+            <tr>
+                <th>CSV</th>
+                <td><a href="{{ data.get('csv', '#') }}" target="_blank" class="btn btn-primary">Download CSV</a></td>
+            </tr>
+        </table>
+
+        <!-- CSV 資料顯示 -->
+        {% if data['csv_data'] %}
+        <h3>CSV Data</h3>
+        <div>
+            {{ data['csv_data']|safe }}
+        </div>
+        {% endif %}
+        
+    </div>
+    
+    <!-- 散布圖顯示 -->
+    <div class="table-wrapper mt-4">
+        {{ plot_html | safe }}
+    </div>
+
+    <!-- 圖表選擇按鈕 -->
+    <h3>Select a Column:</h3>
+    <div style="display: flex; flex-wrap: wrap; gap: 10px;">  
+        {% for j in range(draw_columns|length) %}
+            <label style="font-size: 20px;">
+                <input type="radio" name="chartSelection" value="draw_columns{{ j }}" 
+                       onclick="showChart('myChart_{{ j }}')" style="transform: scale(1.0);">  
+                {{ draw_columns[j] }}
+            </label>
+        {% endfor %}
+    </div>
+
+    <!-- 圖表顯示區 -->
+    <div id="myChart_{{ j }}" class="chart" style="display: none;">
+        <h3>{{ draw_columns[j] }}</h3>
+        <div id="chart_container_{{ j }}"></div>  <!-- 用於放置 Highcharts 圖表 -->
+    </div>
+<!--     <div id="charts">
+        {% for j in range(draw_columns|length) %}
+            <div id="myChart_{{ j }}" class="chart" style="display: none;">
+                <h3>{{ draw_columns[j] }}</h3>
+                <div id="chart_container_{{ j }}"></div>  
+            </div>
+        {% endfor %}
+    </div> -->
+
+    <div>
+        {{ html_content|safe }}  <!-- 將內容插入到網頁中 -->
+    </div>
+    
+    <!-- 資料顯示 -->
+    <div class="table-wrapper mt-4">
+        {{ table_html | safe }}
+    </div>
+
+    <script src="https://code.jquery.com/jquery-3.5.2.min.js"></script>
+    <script src="https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/js/bootstrap.min.js"></script>
+</body>
+</html>
