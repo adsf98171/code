@@ -1,0 +1,87 @@
+import pandas as pd
+
+# 定義處理 'Scan' 和 'S1/2' 的排序函數
+def sort_scan(scan_value):
+    if 'Scan' in scan_value:
+        try:
+            return int(scan_value.split('Scan')[1].split('_')[0])  # 提取 'Scan' 的數字部分
+        except (ValueError, IndexError):
+            return float('inf')  # 解析失敗的話，排在最後
+    elif 'S' in scan_value and '/' in scan_value:
+        try:
+            # 對於 'S1/2' 類型的值，返回一個介於 Scan1 和 Scan2 之間的值 (如 1.5)
+            range_values = scan_value.split('_')[0].split('S')[1].split('/')
+            return (float(range_values[0]) + float(range_values[1])) / 2
+        except (ValueError, IndexError):
+            return float('inf')  # 解析失敗的話，排在最後
+    else:
+        return float('inf')
+
+
+# 定義處理 'M' 和 'O' 的排序函數
+def sort_m_o(scan_m_value):
+    if 'M' in scan_m_value:
+        try:
+            return float(scan_m_value.split('M')[1].split('->')[0])  # 提取 'M' 之後的數字部分
+        except (ValueError, IndexError):
+            return float('inf')  # 解析失敗的話，排在最後
+    elif 'O' in scan_m_value:
+        try:
+            # 對於 'O1/2' 類型的值，返回一個介於 M1 和 M2 之間的值 (如 1.5)
+            m_values = scan_m_value.split('O')[1].split('->')[0]
+            range_m_values = m_values.split('/')
+            return (float(range_m_values[0]) + float(range_m_values[1])) / 2
+        except (ValueError, IndexError):
+            return float('inf')  # 解析失敗的話，排在最後
+    else:
+        return float('inf')
+
+def diff_sort(diff_scan_m):
+    def parse_key(key):
+        if '->' in key:
+            left, right = key.split('->')
+        else:
+            left, right = key, None
+
+        # 提取並處理左邊和右邊部分
+        left_sorted = left.split('_')
+        right_sorted = right.split('_') if right else []
+
+        # 處理 Scan 和 M 部分的排序
+        left_scan = sort_scan(left_sorted[0])  # 提取左邊的 Scan 部分
+        left_m = sort_m_o(left_sorted[1]) if len(left_sorted) > 1 else float('inf')  # 左邊的 M 部分
+        right_scan = sort_scan(right_sorted[0]) if right_sorted else float('inf')  # 右邊的 Scan 部分
+        right_m = sort_m_o(right_sorted[1]) if len(right_sorted) > 1 else float('inf')  # 右邊的 M 部分
+
+        return left_scan, left_m, right_scan, right_m
+
+    # 進行排序
+    parsed_keys = [(key, parse_key(key)) for key in diff_scan_m]
+
+    # 按照解析後的順序排序，先按 Scan 排，再按 M 排
+    sorted_keys = sorted(parsed_keys, key=lambda x: (x[1][0], x[1][1], x[1][2], x[1][3]))
+
+    return [key for key, _ in sorted_keys]
+
+
+
+
+# 示例數據
+data = {
+    'Diff_Scan_M': [
+        'Scan3_M2->M3',
+        'Scan3_M7->Scan4_M1',
+        'Scan2_O3/4->M4',
+        'Scan2_M3->O3/4',
+        'S1/2_S1/2->Scan1_M2',
+        'Scan1_M2->S1/2_S1/2'
+    ]
+}
+
+# 創建 DataFrame
+df = pd.DataFrame(data)
+
+# 排序
+df['Sorted_Diff_Scan_M'] = diff_sort(df['Diff_Scan_M'])
+# print(df[['Diff_Scan_M', 'Sorted_Diff_Scan_M']])
+print(df[['Sorted_Diff_Scan_M']])
